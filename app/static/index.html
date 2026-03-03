@@ -3248,7 +3248,7 @@
             <label style="display:flex;align-items:center;gap:10px;cursor:pointer;">
               <div style="position:relative;width:44px;height:24px;flex-shrink:0;">
                 <input type="checkbox" :checked="settings.demo_mode === '1'"
-                  @change="settings.demo_mode = $event.target.checked ? '1' : '0'"
+                  @change="settings.demo_mode = $event.target.checked ? '1' : '0'; saveSettings()"
                   style="opacity:0;width:0;height:0;position:absolute;" />
                 <div :style="`position:absolute;inset:0;border-radius:24px;transition:.2s;background:${settings.demo_mode==='1'?'var(--accent)':'var(--surf2)'};`"></div>
                 <div :style="`position:absolute;top:3px;left:${settings.demo_mode==='1'?'22':'3'}px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);`"></div>
@@ -3256,7 +3256,7 @@
               <span style="font-size:14px;font-weight:500;" x-text="settings.demo_mode === '1' ? 'Demo mode ON — data is masked' : 'Demo mode off'"></span>
             </label>
             <div x-show="settings.demo_mode === '1'" class="alert alert-info" style="margin-top:12px;font-size:12px;">
-              Save settings to apply. Reload the page after saving to see demo data.
+              Demo mode is ON. Reload the page to see masked data.
             </div>
           </div>
 
