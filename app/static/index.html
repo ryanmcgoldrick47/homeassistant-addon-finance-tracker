@@ -721,7 +721,7 @@
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:3px;">
                   <span x-show="t.is_flagged" style="font-size:12px;">🚩</span>
                   <span x-show="t.receipt_path" title="Receipt attached" style="font-size:12px;">📎</span>
-                  <img x-show="t.logo_domain" :src="'https://logo.clearbit.com/' + t.logo_domain"
+                  <img x-show="t.logo_domain" :src="'https://www.google.com/s2/favicons?domain=' + t.logo_domain + '&sz=32'"
                     @error="$el.style.display='none'"
                     style="width:18px;height:18px;border-radius:3px;object-fit:contain;flex-shrink:0;" />
                   <span style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;
@@ -778,7 +778,7 @@
                       <div style="display:flex;align-items:center;gap:6px;">
                         <span x-show="t.is_flagged" style="font-size:11px;">🚩</span>
                         <span x-show="t.receipt_path" title="Receipt attached" style="font-size:11px;">📎</span>
-                        <img x-show="t.logo_domain" :src="'https://logo.clearbit.com/' + t.logo_domain"
+                        <img x-show="t.logo_domain" :src="'https://www.google.com/s2/favicons?domain=' + t.logo_domain + '&sz=32'"
                           @error="$el.style.display='none'"
                           style="width:18px;height:18px;border-radius:3px;object-fit:contain;flex-shrink:0;" />
                         <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
@@ -2976,9 +2976,9 @@
           <div class="card" style="padding:14px 16px;">
             <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Savings Rate</div>
             <div style="font-size:22px;font-weight:700;"
-              :style="(scoreData?.savings_rate_pct||0)>=20?'color:var(--green)':(scoreData?.savings_rate_pct||0)>0?'color:var(--amber)':'color:var(--red)'"
+              :style="(scoreData?.savings_rate_pct||0)>=(savingsRateData.target_pct||20)?'color:var(--green)':(scoreData?.savings_rate_pct||0)>0?'color:var(--amber)':'color:var(--red)'"
               x-text="(scoreData?.savings_rate_pct||0).toFixed(1) + '%'"></div>
-            <div style="font-size:11px;color:var(--muted);margin-top:3px;">20% = full score</div>
+            <div style="font-size:11px;color:var(--muted);margin-top:3px;" x-text="'Target: ' + (savingsRateData.target_pct||20) + '%'"></div>
           </div>
           <div class="card" style="padding:14px 16px;">
             <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Green Streak</div>
@@ -3019,6 +3019,74 @@
               <div class="stat-value" :style="(scoreData?.bills_score||0)>=18?'color:var(--green)':(scoreData?.bills_score||0)>=12?'color:var(--amber)':'color:var(--red)'"
                 x-text="scoreData?.bills_score || 0"></div>
               <div style="font-size:11px;color:var(--muted);margin-top:2px;">Paid on time</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Monthly Savings Rate -->
+        <div class="card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+            <div class="section-title" style="margin:0;">Monthly Savings Rate</div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <template x-if="!editingSavingsRate">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <span style="font-size:12px;color:var(--muted);">Target:</span>
+                  <span style="font-size:14px;font-weight:600;"
+                    :style="(savingsRateData.avg_pct||0)>=(savingsRateData.target_pct||20)?'color:var(--green)':'color:var(--amber)'"
+                    x-text="(savingsRateData.target_pct||20) + '%'"></span>
+                  <button @click="editingSavingsRate=true; newSavingsRateTarget=savingsRateData.target_pct"
+                    class="btn btn-ghost btn-sm" style="padding:2px 7px;font-size:11px;">Edit</button>
+                </div>
+              </template>
+              <template x-if="editingSavingsRate">
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <input x-model="newSavingsRateTarget" type="number" min="1" max="100" step="1"
+                    style="width:56px;padding:4px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface2);color:var(--text);font-size:13px;" />
+                  <span style="font-size:12px;color:var(--muted);">%</span>
+                  <button @click="saveSavingsRateTarget()" class="btn btn-primary btn-sm">Save</button>
+                  <button @click="editingSavingsRate=false" class="btn btn-ghost btn-sm">✕</button>
+                </div>
+              </template>
+            </div>
+          </div>
+          <!-- Summary stats -->
+          <div style="display:flex;gap:20px;margin-bottom:16px;">
+            <div>
+              <div style="font-size:11px;color:var(--muted);">12-month avg</div>
+              <div style="font-size:20px;font-weight:700;"
+                :style="(savingsRateData.avg_pct||0)>=(savingsRateData.target_pct||20)?'color:var(--green)':'color:var(--amber)'"
+                x-text="(savingsRateData.avg_pct||0).toFixed(1)+'%'"></div>
+            </div>
+            <div>
+              <div style="font-size:11px;color:var(--muted);">Months on target</div>
+              <div style="font-size:20px;font-weight:700;"
+                x-text="(savingsRateData.months_met||0) + ' / ' + (savingsRateData.total_months_with_data||0)"></div>
+            </div>
+          </div>
+          <!-- Bar chart -->
+          <div style="position:relative;">
+            <!-- Target line -->
+            <div x-show="savingsRateData._scale > 0"
+              :style="`position:absolute;left:0;right:0;border-top:1px dashed var(--muted);pointer-events:none;z-index:1;bottom:${Math.min(Math.round((savingsRateData.target_pct||20) / (savingsRateData._scale||40) * 80), 80)}px;`"></div>
+            <!-- Bars -->
+            <div style="display:flex;align-items:flex-end;gap:3px;height:80px;">
+              <template x-for="mo in (savingsRateData.months||[])" :key="mo.label">
+                <div style="flex:1;display:flex;flex-direction:column;align-items:stretch;min-width:0;">
+                  <template x-if="mo.has_data">
+                    <div :style="`height:${Math.max(2, Math.min(Math.round(Math.max(0, mo.actual_pct) / (savingsRateData._scale||40) * 80), 80))}px;border-radius:3px 3px 0 0;background:${mo.met_target?'var(--green)':mo.actual_pct>=0?'var(--amber)':'var(--red)'};`"
+                      :title="mo.label + ': ' + mo.actual_pct + '%'"></div>
+                  </template>
+                  <template x-if="!mo.has_data">
+                    <div style="height:3px;border-radius:2px;background:var(--surface2);margin-top:auto;"></div>
+                  </template>
+                </div>
+              </template>
+            </div>
+            <!-- X labels -->
+            <div style="display:flex;gap:3px;margin-top:5px;">
+              <template x-for="mo in (savingsRateData.months||[])" :key="mo.label">
+                <div style="flex:1;text-align:center;font-size:9px;color:var(--muted);overflow:hidden;white-space:nowrap;" x-text="mo.label"></div>
+              </template>
             </div>
           </div>
         </div>
@@ -4577,6 +4645,9 @@ function app() {
 
     // Goals
     goals: [],
+    savingsRateData: { target_pct: 20, months: [], avg_pct: 0, months_met: 0, total_months_with_data: 0, _scale: 40 },
+    editingSavingsRate: false,
+    newSavingsRateTarget: '',
     addGoalOpen: false,
     newGoal: { name: '', target_aud: '', target_date: '', category_id: '', notes: '' },
     contributeModal: { open: false, goal: null, amount_aud: '', notes: '' },
@@ -5054,7 +5125,7 @@ function app() {
         if (p === 'merchants') this.loadMerchants();
         if (p === 'crypto') this.loadCrypto();
         if (p === 'investments') { this.loadInvestments(); this.loadCgt(); this.loadDividends(); this.loadBenchmark(); }
-        if (p === 'goals') { this.loadGoals(); this.loadScore(); this.loadAchievements(); this.loadStreaks(); this.loadChallenges(); }
+        if (p === 'goals') { this.loadGoals(); this.loadScore(); this.loadAchievements(); this.loadStreaks(); this.loadChallenges(); this.loadSavingsRate(); }
         if (p === 'networth') this.loadNetWorth();
         if (p === 'super') this.loadSuper();
         if (p === 'import') { this.loadAccounts(); this.loadFolderWatchStatus(); }
@@ -5639,6 +5710,19 @@ function app() {
       await this.api(`/api/goals/${goalId}/contributions/${contribId}`, { method: 'DELETE' });
       this.loadGoals();
       this.showToast('Contribution removed');
+    },
+
+    async loadSavingsRate() {
+      this.savingsRateData = await this.api('/api/goals/savings-rate').catch(() =>
+        ({ target_pct: 20, months: [], avg_pct: 0, months_met: 0, total_months_with_data: 0, _scale: 40 }));
+    },
+    async saveSavingsRateTarget() {
+      const pct = parseFloat(this.newSavingsRateTarget);
+      if (!pct || pct < 1 || pct > 100) return;
+      await this.api('/api/goals/savings-rate', { method: 'PATCH', body: JSON.stringify({ target_pct: pct }) });
+      this.editingSavingsRate = false;
+      await this.loadSavingsRate();
+      this.showToast('Savings rate target updated');
     },
 
     // ── Score / Achievements / Streaks ──

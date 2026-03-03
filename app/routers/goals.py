@@ -5,10 +5,10 @@ from datetime import date, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlmodel import Session, select
+from sqlmodel import Session, select, func
 import httpx
 
-from database import get_session, Goal, GoalContribution, Category
+from database import get_session, Goal, GoalContribution, Category, Transaction
 
 router = APIRouter()
 
@@ -29,6 +29,10 @@ class ContributionIn(BaseModel):
     amount_cents: int
     contributed_date: Optional[str] = None
     notes: Optional[str] = None
+
+
+class SavingsRateTargetIn(BaseModel):
+    target_pct: float
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +198,69 @@ def delete_contribution(goal_id: int, contrib_id: int, session: Session = Depend
     session.delete(contrib)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Monthly savings rate target
+# ---------------------------------------------------------------------------
+
+@router.get("/api/goals/savings-rate")
+def get_savings_rate_history(session: Session = Depends(get_session)):
+    from deps import get_setting
+    target_pct = float(get_setting(session, "savings_rate_target") or "20")
+
+    today = date.today()
+    months = []
+    for i in range(11, -1, -1):
+        m = today.month - i
+        y = today.year
+        while m <= 0:
+            m += 12
+            y -= 1
+
+        def _sum(is_credit: bool) -> float:
+            return float(session.exec(
+                select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.is_credit == is_credit,
+                    func.strftime("%m", Transaction.date) == f"{m:02d}",
+                    func.strftime("%Y", Transaction.date) == str(y),
+                )
+            ).one())
+
+        income = _sum(True)
+        spending = _sum(False)
+        net = income - spending
+        actual_pct = round(net / income * 100, 1) if income > 0 else 0
+        months.append({
+            "year": y,
+            "month": m,
+            "label": date(y, m, 1).strftime("%b %y"),
+            "income": round(income, 2),
+            "spending": round(spending, 2),
+            "net": round(net, 2),
+            "actual_pct": actual_pct,
+            "met_target": actual_pct >= target_pct,
+            "has_data": income > 0 or spending > 0,
+        })
+
+    data_months = [mo for mo in months if mo["has_data"]]
+    avg_pct = round(sum(mo["actual_pct"] for mo in data_months) / len(data_months), 1) if data_months else 0
+    months_met = sum(1 for mo in data_months if mo["met_target"])
+    all_pcts = [mo["actual_pct"] for mo in data_months] + [float(target_pct), 5.0]
+    scale = round(max(all_pcts) * 1.2, 1)
+
+    return {
+        "target_pct": target_pct,
+        "months": months,
+        "avg_pct": avg_pct,
+        "months_met": months_met,
+        "total_months_with_data": len(data_months),
+        "_scale": scale,
+    }
+
+
+@router.patch("/api/goals/savings-rate")
+def set_savings_rate_target(body: SavingsRateTargetIn, session: Session = Depends(get_session)):
+    from deps import set_setting
+    set_setting(session, "savings_rate_target", str(body.target_pct))
+    return {"ok": True, "target_pct": body.target_pct}
