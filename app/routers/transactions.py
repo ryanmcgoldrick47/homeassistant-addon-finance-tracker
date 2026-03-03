@@ -1,0 +1,441 @@
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+from datetime import date
+from typing import Optional, List
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
+from sqlmodel import Session, select, func
+from pydantic import BaseModel
+
+from database import Transaction, Category, Account, MerchantEnrichment, get_session
+from deps import get_setting
+
+router = APIRouter(prefix="/api/transactions", tags=["transactions"])
+
+
+class TransactionCreate(BaseModel):
+    account_id: Optional[int] = None
+    date: date
+    description: str
+    amount: float
+    is_credit: bool = False
+    category_id: Optional[int] = None
+    notes: Optional[str] = None
+    tax_deductible: bool = False
+
+
+class TransactionUpdate(BaseModel):
+    category_id: Optional[int] = None
+    is_flagged: Optional[bool] = None
+    is_reviewed: Optional[bool] = None
+    tax_deductible: Optional[bool] = None
+    tax_category: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class BulkUpdate(BaseModel):
+    ids: List[int]
+    category_id: Optional[int] = None
+    is_reviewed: Optional[bool] = None
+    is_flagged: Optional[bool] = None
+    tax_deductible: Optional[bool] = None
+    delete: bool = False
+
+
+@router.get("")
+def list_transactions(
+    account_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    is_flagged: Optional[bool] = None,
+    is_reviewed: Optional[bool] = None,
+    tax_deductible: Optional[bool] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    fy: Optional[int] = None,   # financial year ending, e.g. 2025 = Jul24–Jun25
+    search: Optional[str] = None,
+    limit: int = Query(default=200, le=1000),
+    offset: int = 0,
+    session: Session = Depends(get_session),
+):
+    stmt = select(Transaction).order_by(Transaction.date.desc())
+
+    if account_id:
+        stmt = stmt.where(Transaction.account_id == account_id)
+    if category_id is not None:
+        stmt = stmt.where(Transaction.category_id == category_id)
+    if is_flagged is not None:
+        stmt = stmt.where(Transaction.is_flagged == is_flagged)
+    if is_reviewed is not None:
+        stmt = stmt.where(Transaction.is_reviewed == is_reviewed)
+    if tax_deductible is not None:
+        stmt = stmt.where(Transaction.tax_deductible == tax_deductible)
+    if month and year:
+        stmt = stmt.where(
+            func.strftime("%m", Transaction.date) == f"{month:02d}",
+            func.strftime("%Y", Transaction.date) == str(year),
+        )
+    if fy:
+        # FY ending June <fy>: Jul <fy-1> – Jun <fy>
+        start = date(fy - 1, 7, 1)
+        end = date(fy, 6, 30)
+        stmt = stmt.where(Transaction.date >= start, Transaction.date <= end)
+    if search:
+        stmt = stmt.where(Transaction.description.ilike(f"%{search}%"))
+
+    total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
+    txns = session.exec(stmt.offset(offset).limit(limit)).all()
+
+    # Batch-fetch merchant enrichments for displayed transactions
+    raw_keys = {t.description.strip().upper()[:50] for t in txns}
+    enrichments: dict[str, MerchantEnrichment] = {}
+    if raw_keys:
+        for e in session.exec(
+            select(MerchantEnrichment).where(MerchantEnrichment.raw_key.in_(raw_keys))
+        ).all():
+            enrichments[e.raw_key] = e
+
+    result = []
+    for t in txns:
+        cat = session.get(Category, t.category_id) if t.category_id else None
+        acc = session.get(Account, t.account_id) if t.account_id else None
+        enrich = enrichments.get(t.description.strip().upper()[:50])
+        result.append({
+            **t.model_dump(),
+            "category_name": cat.name if cat else None,
+            "category_colour": cat.colour if cat else "#d1d5db",
+            "account_name": acc.name if acc else None,
+            "clean_name": enrich.clean_name if enrich else None,
+            "logo_domain": enrich.domain if enrich else None,
+        })
+
+    return {"total": total, "items": result}
+
+
+@router.post("")
+def create_transaction(body: TransactionCreate, session: Session = Depends(get_session)):
+    raw = f"{body.date}|{body.description}|{body.amount:.2f}|manual"
+    raw_hash = hashlib.sha256(raw.encode()).hexdigest()
+    txn = Transaction(
+        account_id=body.account_id or None,
+        date=body.date,
+        description=body.description,
+        amount=abs(body.amount),
+        is_credit=body.is_credit,
+        category_id=body.category_id or None,
+        notes=body.notes or None,
+        tax_deductible=body.tax_deductible,
+        is_reviewed=True,  # manually entered = already reviewed
+        raw_hash=raw_hash,
+    )
+    session.add(txn)
+    session.commit()
+    session.refresh(txn)
+    return txn
+
+
+@router.get("/summary")
+def spend_summary(
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    fy: Optional[int] = None,
+    session: Session = Depends(get_session),
+):
+    """Spend by category for a period."""
+    stmt = select(Transaction)
+    if month and year:
+        stmt = stmt.where(
+            func.strftime("%m", Transaction.date) == f"{month:02d}",
+            func.strftime("%Y", Transaction.date) == str(year),
+        )
+    if fy:
+        start = date(fy - 1, 7, 1)
+        end = date(fy, 6, 30)
+        stmt = stmt.where(Transaction.date >= start, Transaction.date <= end)
+
+    txns = session.exec(stmt).all()
+    by_cat: dict[str, float] = {}
+    for t in txns:
+        if t.is_credit:
+            continue
+        cat = session.get(Category, t.category_id) if t.category_id else None
+        cat_name = cat.name if cat else "Uncategorised"
+        by_cat[cat_name] = by_cat.get(cat_name, 0) + t.amount
+
+    return {"by_category": by_cat}
+
+
+@router.get("/summary/recent-month")
+def recent_month(session: Session = Depends(get_session)):
+    """Return the most recent month/year that has transactions."""
+    row = session.exec(
+        select(
+            func.strftime("%m", Transaction.date),
+            func.strftime("%Y", Transaction.date),
+        ).order_by(Transaction.date.desc()).limit(1)
+    ).first()
+    if not row:
+        from datetime import date as dt
+        return {"month": dt.today().month, "year": dt.today().year}
+    return {"month": int(row[0]), "year": int(row[1])}
+
+
+@router.get("/export")
+def export_transactions(
+    account_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    is_flagged: Optional[bool] = None,
+    is_reviewed: Optional[bool] = None,
+    tax_deductible: Optional[bool] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    fy: Optional[int] = None,
+    search: Optional[str] = None,
+    session: Session = Depends(get_session),
+):
+    stmt = select(Transaction).order_by(Transaction.date.desc())
+    if account_id:
+        stmt = stmt.where(Transaction.account_id == account_id)
+    if category_id is not None:
+        stmt = stmt.where(Transaction.category_id == category_id)
+    if is_flagged is not None:
+        stmt = stmt.where(Transaction.is_flagged == is_flagged)
+    if is_reviewed is not None:
+        stmt = stmt.where(Transaction.is_reviewed == is_reviewed)
+    if tax_deductible is not None:
+        stmt = stmt.where(Transaction.tax_deductible == tax_deductible)
+    if month and year:
+        stmt = stmt.where(
+            func.strftime("%m", Transaction.date) == f"{month:02d}",
+            func.strftime("%Y", Transaction.date) == str(year),
+        )
+    if fy:
+        start = date(fy - 1, 7, 1)
+        end = date(fy, 6, 30)
+        stmt = stmt.where(Transaction.date >= start, Transaction.date <= end)
+    if search:
+        stmt = stmt.where(Transaction.description.ilike(f"%{search}%"))
+
+    txns = session.exec(stmt).all()
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(['Date', 'Description', 'Amount', 'Type', 'Category', 'Account',
+                     'Tax Deductible', 'Tax Category', 'Notes'])
+    for t in txns:
+        cat = session.get(Category, t.category_id) if t.category_id else None
+        acc = session.get(Account, t.account_id) if t.account_id else None
+        signed = t.amount if t.is_credit else -t.amount
+        writer.writerow([
+            t.date,
+            t.description,
+            f"{signed:.2f}",
+            'Credit' if t.is_credit else 'Debit',
+            cat.name if cat else '',
+            acc.name if acc else '',
+            'Yes' if t.tax_deductible else 'No',
+            t.tax_category or '',
+            t.notes or '',
+        ])
+
+    filename = "transactions"
+    if month and year:
+        filename += f"_{year}_{month:02d}"
+    elif fy:
+        filename += f"_FY{fy}"
+    filename += ".csv"
+
+    return StreamingResponse(
+        io.BytesIO(buf.getvalue().encode('utf-8-sig')),  # BOM for Excel compatibility
+        media_type='text/csv',
+        headers={'Content-Disposition': f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/merchants")
+def merchant_analytics(
+    month: Optional[int] = None,
+    year: Optional[int] = None,
+    fy: Optional[int] = None,
+    limit: int = Query(default=20, le=100),
+    session: Session = Depends(get_session),
+):
+    stmt = select(Transaction).where(Transaction.is_credit == False)
+    if month and year:
+        stmt = stmt.where(
+            func.strftime("%m", Transaction.date) == f"{month:02d}",
+            func.strftime("%Y", Transaction.date) == str(year),
+        )
+    if fy:
+        start = date(fy - 1, 7, 1)
+        end = date(fy, 6, 30)
+        stmt = stmt.where(Transaction.date >= start, Transaction.date <= end)
+
+    txns = session.exec(stmt).all()
+
+    merchants: dict[str, dict] = {}
+    for t in txns:
+        key = t.description.strip().upper()[:50]
+        if key not in merchants:
+            merchants[key] = {
+                'name': t.description,
+                'count': 0,
+                'total': 0.0,
+                'category_id': t.category_id,
+            }
+        merchants[key]['count'] += 1
+        merchants[key]['total'] += t.amount
+
+    result = sorted(merchants.values(), key=lambda x: x['total'], reverse=True)[:limit]
+    for m in result:
+        cat = session.get(Category, m['category_id']) if m['category_id'] else None
+        m['category_name'] = cat.name if cat else 'Uncategorised'
+        m['category_colour'] = cat.colour if cat else '#d1d5db'
+        m['avg'] = round(m['total'] / m['count'], 2)
+        m['total'] = round(m['total'], 2)
+        del m['category_id']
+
+    return result
+
+
+@router.patch("/bulk")
+def bulk_update(body: BulkUpdate, session: Session = Depends(get_session)):
+    if not body.ids:
+        return {"updated": 0, "deleted": 0}
+    updated = 0
+    deleted = 0
+    for txn_id in body.ids:
+        txn = session.get(Transaction, txn_id)
+        if not txn:
+            continue
+        if body.delete:
+            session.delete(txn)
+            deleted += 1
+        else:
+            if body.category_id is not None:
+                txn.category_id = body.category_id
+            if body.is_reviewed is not None:
+                txn.is_reviewed = body.is_reviewed
+            if body.is_flagged is not None:
+                txn.is_flagged = body.is_flagged
+            if body.tax_deductible is not None:
+                txn.tax_deductible = body.tax_deductible
+            session.add(txn)
+            updated += 1
+    session.commit()
+    return {"updated": updated, "deleted": deleted}
+
+
+@router.patch("/{txn_id}")
+def update_transaction(
+    txn_id: int,
+    body: TransactionUpdate,
+    session: Session = Depends(get_session),
+):
+    txn = session.get(Transaction, txn_id)
+    if not txn:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    data = body.model_dump(exclude_none=True)
+    for k, v in data.items():
+        setattr(txn, k, v)
+    session.add(txn)
+    session.commit()
+    session.refresh(txn)
+    return txn
+
+
+@router.get("/review-queue")
+def review_queue(
+    mode: str = "categorise",  # categorise | tax | receipts
+    limit: int = 30,
+    session: Session = Depends(get_session),
+):
+    """
+    Return transactions for SortSwipe review.
+    - categorise: uncategorised transactions (is_credit=False)
+    - tax: unreviewed transactions in tax-relevant categories
+    - receipts: tax_deductible, amount >= 300, no receipt_path
+    """
+    cats = session.exec(select(Category)).all()
+    cat_map = {c.id: c for c in cats}
+    acc_map_q = session.exec(select(Category).where(Category.name == "Uncategorised"))
+    uncat = acc_map_q.first()
+
+    TAX_RELEVANT_NAMES = {
+        "work-related travel", "work equipment", "work clothing / ppe",
+        "self-education", "investment fees", "donations", "sole trader expenses",
+        "internet & phone", "subscriptions",
+    }
+
+    if mode == "categorise":
+        stmt = select(Transaction).where(
+            Transaction.is_credit == False,
+            Transaction.is_reviewed == False,
+        )
+        if uncat:
+            stmt = stmt.where(Transaction.category_id == uncat.id)
+        txns = session.exec(stmt.order_by(Transaction.date.desc()).limit(limit)).all()
+
+    elif mode == "tax":
+        # Transactions in tax-relevant categories not yet reviewed
+        relevant_ids = [
+            c.id for c in cats
+            if any(name in c.name.lower() for name in TAX_RELEVANT_NAMES)
+        ]
+        if not relevant_ids:
+            txns = []
+        else:
+            txns = session.exec(
+                select(Transaction).where(
+                    Transaction.is_credit == False,
+                    Transaction.is_reviewed == False,
+                    Transaction.tax_deductible == False,
+                    Transaction.category_id.in_(relevant_ids),
+                ).order_by(Transaction.date.desc()).limit(limit)
+            ).all()
+
+    elif mode == "receipts":
+        txns = session.exec(
+            select(Transaction).where(
+                Transaction.tax_deductible == True,
+                Transaction.is_credit == False,
+                Transaction.amount >= 300,
+                Transaction.receipt_path == None,
+            ).order_by(Transaction.date.desc()).limit(limit)
+        ).all()
+    else:
+        txns = []
+
+    result = []
+    for t in txns:
+        cat = cat_map.get(t.category_id)
+        result.append({
+            **t.model_dump(),
+            "category_name": cat.name if cat else "Uncategorised",
+            "category_colour": cat.colour if cat else "#d1d5db",
+        })
+    return {"items": result, "total": len(result)}
+
+
+@router.patch("/{txn_id}/review")
+def mark_reviewed(txn_id: int, session: Session = Depends(get_session)):
+    txn = session.get(Transaction, txn_id)
+    if not txn:
+        raise HTTPException(status_code=404, detail="Not found")
+    txn.is_reviewed = True
+    txn.is_flagged = False
+    session.add(txn)
+    session.commit()
+    return {"ok": True}
+
+
+@router.delete("/{txn_id}")
+def delete_transaction(txn_id: int, session: Session = Depends(get_session)):
+    txn = session.get(Transaction, txn_id)
+    if not txn:
+        raise HTTPException(status_code=404, detail="Not found")
+    session.delete(txn)
+    session.commit()
+    return {"ok": True}
