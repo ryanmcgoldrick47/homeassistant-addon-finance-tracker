@@ -76,12 +76,13 @@ Return ONLY the JSON array, no other text."""
 
 
 def _parse_ai_response(raw: str) -> list:
+    """Extract JSON array from AI response, tolerating preamble/postamble text."""
     raw = raw.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw.strip())
+    start = raw.find("[")
+    end = raw.rfind("]") + 1
+    if start < 0 or end <= 0:
+        raise json.JSONDecodeError("No JSON array found", raw, 0)
+    return json.loads(raw[start:end])
 
 
 async def _call_gemini(api_key: str, prompt: str) -> str:
@@ -99,7 +100,7 @@ async def _call_anthropic(api_key: str, prompt: str) -> str:
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
         model="claude-haiku-4-5-20251001",
-        max_tokens=2000,
+        max_tokens=4096,
         messages=[{"role": "user", "content": prompt}],
     )
     return message.content[0].text
