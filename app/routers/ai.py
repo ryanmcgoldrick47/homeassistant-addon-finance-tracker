@@ -86,24 +86,25 @@ def _parse_ai_response(raw: str) -> list:
 
 
 async def _call_gemini(api_key: str, prompt: str) -> str:
+    import asyncio
     from google import genai
     client = genai.Client(api_key=api_key)
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-    )
-    return response.text
+    def _sync():
+        return client.models.generate_content(model="gemini-2.5-flash", contents=prompt).text
+    return await asyncio.to_thread(_sync)
 
 
 async def _call_anthropic(api_key: str, prompt: str) -> str:
+    import asyncio
     import anthropic
     client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
+    def _sync():
+        return client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            messages=[{"role": "user", "content": prompt}],
+        ).content[0].text
+    return await asyncio.to_thread(_sync)
 
 
 @router.post("/categorise")
