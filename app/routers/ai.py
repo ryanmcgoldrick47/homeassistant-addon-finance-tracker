@@ -185,7 +185,7 @@ async def categorise_transactions(
 async def categorise_all_uncategorised(
     session: Session = Depends(get_session),
 ):
-    """Find all Uncategorised transactions and batch-categorise them."""
+    """Find ALL Uncategorised transactions and batch-categorise them in loops of 50."""
     uncategorised_cat = session.exec(
         select(Category).where(Category.name == "Uncategorised")
     ).first()
@@ -193,15 +193,23 @@ async def categorise_all_uncategorised(
     if not uncategorised_cat:
         return {"categorised": 0}
 
-    txns = session.exec(
-        select(Transaction)
-        .where(Transaction.category_id == uncategorised_cat.id)
-        .limit(50)
-    ).all()
+    # Fetch all uncategorised IDs upfront to avoid infinite loop if AI re-assigns "Uncategorised"
+    all_ids = [
+        t.id for t in session.exec(
+            select(Transaction).where(Transaction.category_id == uncategorised_cat.id)
+        ).all()
+    ]
 
-    if not txns:
+    if not all_ids:
         return {"categorised": 0}
 
-    ids = [t.id for t in txns]
-    req = CategoriseRequest(transaction_ids=ids, force=True)
-    return await categorise_transactions(body=req, session=session)
+    total_categorised = 0
+    BATCH = 50
+
+    for i in range(0, len(all_ids), BATCH):
+        batch_ids = all_ids[i:i + BATCH]
+        req = CategoriseRequest(transaction_ids=batch_ids, force=True)
+        result = await categorise_transactions(body=req, session=session)
+        total_categorised += result.get("categorised", 0)
+
+    return {"categorised": total_categorised}

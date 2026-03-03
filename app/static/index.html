@@ -5969,10 +5969,12 @@ function app() {
       this.loadFlaggedTxns(); this.loadDashboard(); this.showToast('Cleared from review queue');
     },
     async aiCategoriseUncategorised() {
-      this.showToast('Running AI categorisation…', 10000);
+      const count = this.dashboard?.uncategorised_count || 0;
+      const est = count > 50 ? ` (~${Math.ceil(count/50)*8}s)` : '';
+      this.showToast(`Running AI categorisation on ${count} transactions${est}…`, 300000);
       try {
         const data = await this.api('/api/ai/categorise-all-uncategorised', { method: 'POST' });
-        this.showToast(`AI categorised ${data.categorised} transactions`);
+        this.showToast(`✓ AI categorised ${data.categorised} transactions`);
         this.loadTransactions(); this.loadDashboard();
       } catch (e) { /* toast shown by api() */ }
     },
