@@ -71,7 +71,7 @@ def _apply_demo_mask(path: str, data):
     if _re.fullmatch(r"/api/dashboard/?", path):
         for field in ("month_spend", "month_income", "prev_month_spend", "prev_month_income"):
             if field in data:
-                data[field] = mask_amount(data[field] or 100, field)
+                data[field] = mask_amount(data[field] or 100, f"dash_{field}")
         if "net" in data:
             raw = data["net"]
             data["net"] = mask_amount(abs(raw) or 50, "net") * (-1 if raw < 0 else 1)
@@ -132,6 +132,61 @@ def _apply_demo_mask(path: str, data):
             for snap in data:
                 if snap.get("balance_aud") is not None:
                     snap["balance_aud"] = mask_amount(snap["balance_aud"] or 1000, f"super_{snap.get('id', 0)}")
+        return data
+
+    # /api/bills
+    if _re.match(r"/api/bills", path):
+        FAKE_BILL_NAMES = [
+            "Electricity", "Gas", "Water", "Internet", "Mobile Plan",
+            "Health Insurance", "Car Insurance", "Home Insurance",
+            "Gym Membership", "Streaming Service", "Cloud Storage",
+            "Council Rates", "Strata Levy", "Body Corporate",
+        ]
+        items = data if isinstance(data, list) else []
+        for b in items:
+            sid = str(b.get("id", b.get("name", "")))
+            import random, hashlib
+            r = random.Random(int(hashlib.md5(f"bill_{sid}".encode()).hexdigest(), 16))
+            b["name"] = r.choice(FAKE_BILL_NAMES)
+            for f in ("amount_cents",):
+                if b.get(f) is not None:
+                    b[f] = int(mask_amount(b[f] / 100 or 50, f"bill_{f}_{sid}") * 100)
+        return data
+
+    # /api/goals
+    if _re.match(r"/api/goals", path):
+        FAKE_GOAL_NAMES = [
+            "Holiday Fund", "Emergency Fund", "New Car", "Home Deposit",
+            "Wedding Fund", "Education Fund", "Home Renovation", "Investment Buffer",
+        ]
+        items = data if isinstance(data, list) else []
+        for g in items:
+            sid = str(g.get("id", g.get("name", "")))
+            import random, hashlib
+            r = random.Random(int(hashlib.md5(f"goal_{sid}".encode()).hexdigest(), 16))
+            g["name"] = r.choice(FAKE_GOAL_NAMES)
+            for f in ("target_cents", "current_cents"):
+                if g.get(f) is not None:
+                    g[f] = int(mask_amount(g[f] / 100 or 500, f"goal_{f}_{sid}") * 100)
+            if "target_aud" in g:
+                g["target_aud"] = round(g["target_cents"] / 100, 2)
+            if "current_aud" in g:
+                g["current_aud"] = round(g["current_cents"] / 100, 2)
+            if "remaining_aud" in g:
+                g["remaining_aud"] = round(max(0, g["target_cents"] - g["current_cents"]) / 100, 2)
+        return data
+
+    # /api/accounts (account names)
+    if _re.match(r"/api/accounts", path):
+        FAKE_ACCOUNT_NAMES = ["Everyday Account", "Savings Account", "Offset Account", "Credit Card", "Investment Account"]
+        items = data if isinstance(data, list) else []
+        for a in items:
+            sid = str(a.get("id", ""))
+            import random, hashlib
+            r = random.Random(int(hashlib.md5(f"acc_{sid}".encode()).hexdigest(), 16))
+            a["name"] = r.choice(FAKE_ACCOUNT_NAMES)
+            if a.get("balance") is not None:
+                a["balance"] = mask_amount(a["balance"] or 1000, f"acc_bal_{sid}")
         return data
 
     return data
