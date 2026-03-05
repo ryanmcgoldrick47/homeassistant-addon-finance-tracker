@@ -9703,6 +9703,11 @@ function app() {
     async loadGmailStatus() {
       try {
         this.gmailScanStatus = await this.api('/api/gmail/status');
+        if (this.gmailScanStatus?.running && !this.gmailScanning) {
+          this.gmailScanning = true;
+          this.gmailScanResult = 'Scan already in progress…';
+          await this._pollGmailScan();
+        }
       } catch { this.gmailScanStatus = null; }
     },
 
@@ -9723,21 +9728,45 @@ function app() {
         const data = await this.api('/api/gmail/auto-scan', { method: 'POST', body: JSON.stringify(body) });
         if (!data.ok) {
           this.gmailScanError = data.reason || 'Scan failed';
-        } else {
-          const r = data.results;
-          const parts = [];
-          if ((r.payslips?.processed || 0) > 0) parts.push(`${r.payslips.processed} payslip${r.payslips.processed > 1 ? 's' : ''} imported`);
-          if ((r.expenses?.processed || 0) > 0) parts.push(`${r.expenses.processed} expense${r.expenses.processed > 1 ? 's' : ''} imported`);
-          const skipped = (r.payslips?.skipped || 0) + (r.expenses?.skipped || 0);
-          if (skipped > 0) parts.push(`${skipped} skipped`);
-          this.gmailScanResult = parts.length ? parts.join(', ') : 'Scan complete — nothing new found';
-          const allErrors = [...(r.payslips?.errors || []), ...(r.expenses?.errors || [])];
-          if (allErrors.length) this.gmailScanError = allErrors.slice(0, 2).join('; ');
-          await this.loadGmailStatus();
-          await this.loadDashboard();
+          this.gmailScanning = false;
+          return;
         }
-      } catch (e) { this.gmailScanError = e.message || 'Scan error'; }
-      finally { this.gmailScanning = false; }
+        // Scan is running in background — poll status until complete
+        this.gmailScanResult = 'Scan running… checking every 10s';
+        await this._pollGmailScan();
+      } catch (e) { this.gmailScanError = e.message || 'Scan error'; this.gmailScanning = false; }
+    },
+
+    async _pollGmailScan() {
+      for (let i = 0; i < 60; i++) {  // max 10 minutes
+        await new Promise(r => setTimeout(r, 10000));
+        try {
+          const status = await this.api('/api/gmail/status');
+          this.gmailScanStatus = status;
+          if (!status.running) {
+            const r = status.last_result;
+            if (!r) { this.gmailScanResult = 'Scan complete'; }
+            else if (!r.ok && r.reason) { this.gmailScanError = r.reason; this.gmailScanResult = ''; }
+            else {
+              const parts = [];
+              if ((r.payslips?.processed || 0) > 0) parts.push(`${r.payslips.processed} payslip${r.payslips.processed > 1 ? 's' : ''} imported`);
+              if ((r.expenses?.processed || 0) > 0) parts.push(`${r.expenses.processed} expense${r.expenses.processed > 1 ? 's' : ''} imported`);
+              const skipped = (r.payslips?.skipped || 0) + (r.expenses?.skipped || 0);
+              if (skipped > 0) parts.push(`${skipped} skipped`);
+              this.gmailScanResult = parts.length ? parts.join(', ') : 'Scan complete — nothing new found';
+              const allErrors = [...(r.payslips?.errors || []), ...(r.expenses?.errors || [])];
+              if (allErrors.length) this.gmailScanError = allErrors.slice(0, 2).join('; ');
+            }
+            await this.loadDashboard();
+            this.gmailScanning = false;
+            return;
+          }
+          const elapsed = (i + 1) * 10;
+          this.gmailScanResult = `Scan running… ${elapsed}s elapsed`;
+        } catch { /* keep polling */ }
+      }
+      this.gmailScanResult = 'Scan taking longer than expected — check back later';
+      this.gmailScanning = false;
     },
 
     async scanGmailPreview() {

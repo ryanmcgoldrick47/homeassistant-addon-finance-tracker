@@ -7,6 +7,7 @@ import hashlib
 import imaplib
 import json
 import os
+import asyncio
 import re
 import ssl
 from datetime import date, datetime, timedelta
@@ -14,7 +15,7 @@ from email.header import decode_header
 from html.parser import HTMLParser
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -582,13 +583,19 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
         "since_date": since_date,
     }
 
+    loop = asyncio.get_event_loop()
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+
     # ── 1. Payslip labels (comma-separated) ──────────────────────────────────
     payslip_labels = [l.strip() for l in payslip_label.split(",") if l.strip()]
     if payslip_labels:
         try:
             emails = []
             for lbl in payslip_labels:
-                emails += _fetch_emails_from_label(email_addr, app_password, lbl, since_date)
+                fetched = await loop.run_in_executor(
+                    executor, _fetch_emails_from_label, email_addr, app_password, lbl, since_date
+                )
+                emails += fetched
             # Deduplicate by message_id across labels
             seen = set()
             emails = [e for e in emails if e["message_id"] not in seen and not seen.add(e["message_id"])]
@@ -615,7 +622,10 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
         try:
             emails = []
             for lbl in expense_labels:
-                emails += _fetch_emails_from_label(email_addr, app_password, lbl, since_date)
+                fetched = await loop.run_in_executor(
+                    executor, _fetch_emails_from_label, email_addr, app_password, lbl, since_date
+                )
+                emails += fetched
             seen2 = set()
             emails = [e for e in emails if e["message_id"] not in seen2 and not seen2.add(e["message_id"])]
 
@@ -840,15 +850,26 @@ def gmail_scan_status(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Return last scan time and configured labels."""
+    """Return last scan time, configured labels, running state, and last result."""
+    import json as _json
     last_scan = get_setting(session, "gmail_last_scan") or None
     payslip_label = get_setting(session, "gmail_payslip_label") or ""
     expense_label = get_setting(session, "gmail_expense_label") or ""
+    running = get_setting(session, "gmail_scan_running") == "1"
+    last_result_raw = get_setting(session, "gmail_last_result") or None
+    last_result = None
+    if last_result_raw:
+        try:
+            last_result = _json.loads(last_result_raw)
+        except Exception:
+            last_result = {"raw": last_result_raw}
     return {
         "last_scan": last_scan,
         "payslip_label": payslip_label,
         "expense_label": expense_label,
         "configured": bool(payslip_label or expense_label),
+        "running": running,
+        "last_result": last_result,
     }
 
 
@@ -856,20 +877,37 @@ class AutoScanRequest(BaseModel):
     since_date: Optional[str] = None  # ISO date YYYY-MM-DD; if omitted, uses last_scan logic
 
 
+async def _run_scan_background(user_id: int, override_since: str | None):
+    """Run scan in background and store result in settings."""
+    from database import engine
+    with Session(engine) as bg_session:
+        set_setting(bg_session, "gmail_scan_running", "1")
+        try:
+            result = await _run_gmail_scan(bg_session, user_id, override_since=override_since)
+            import json as _json
+            set_setting(bg_session, "gmail_last_result", _json.dumps(result))
+        except Exception as e:
+            set_setting(bg_session, "gmail_last_result", f'{{"ok":false,"reason":"{e}"}}')
+        finally:
+            set_setting(bg_session, "gmail_scan_running", "0")
+
+
 @router.post("/auto-scan")
 async def auto_scan_gmail(
+    background_tasks: BackgroundTasks,
     body: AutoScanRequest = AutoScanRequest(),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
-    Scan configured Gmail labels and import payslips + expense transactions.
-    Pass since_date (YYYY-MM-DD) to override the normal last-scan-based window.
-    Payslip PDFs are saved as original files and parsed via AI.
-    Receipt attachments are saved as original files and linked to transactions.
+    Start a Gmail label scan in the background — returns immediately.
+    Poll GET /api/gmail/status to check running state and last result.
     """
-    result = await _run_gmail_scan(session, current_user.id, override_since=body.since_date)
-    return result
+    running = get_setting(session, "gmail_scan_running") or "0"
+    if running == "1":
+        return {"ok": False, "reason": "Scan already in progress"}
+    background_tasks.add_task(_run_scan_background, current_user.id, body.since_date)
+    return {"ok": True, "status": "running", "message": "Scan started — check back in a minute"}
 
 
 @router.post("/scan")
