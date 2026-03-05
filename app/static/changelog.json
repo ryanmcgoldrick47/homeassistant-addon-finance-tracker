@@ -1,6 +1,17 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v28",
+    "title": "Setup Wizard + PDF Viewer Fix",
+    "items": [
+      "New Setup Guide page (🚀 in sidebar): Typeform-style onboarding wizard walks new users through profile, account, CSV import, bills, goals, AI key, and notifications",
+      "10-step wizard with progress bar, dot indicators, slide animations, skip/back navigation, and inline confirmation after each step",
+      "First-time users (no accounts) are automatically directed to the wizard on login",
+      "PDF viewer: 'View PDF' now fetches the file with auth and opens via a Blob URL — fixes Brave/Chrome popup blocking and shield issues"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v27",
     "title": "Merchant Logos + Sticky Settings + Mortgage Interest",
     "items": [
