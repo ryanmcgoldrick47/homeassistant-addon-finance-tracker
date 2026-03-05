@@ -1,0 +1,288 @@
+[
+  {
+    "date": "2026-03-05",
+    "version": "v24",
+    "title": "Chat History + Interactive RBA Chart",
+    "items": [
+      "Chat History page: every AI conversation is saved and accessible from the More menu or the History button in the chat panel",
+      "Search conversations by title or content, click to reopen and continue any past chat",
+      "New Chat button in chat panel header starts a fresh conversation without clearing history",
+      "RBA cash rate sparkline is now interactive — hover or swipe across the chart to see the exact date and rate at each point",
+      "Chat conversations are linked to individual users and persist across sessions"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v23",
+    "title": "Work Reimbursable Expenses",
+    "items": [
+      "Mark any expense as 💼 reimbursable — excluded from personal spend, budgets, and trend calculations",
+      "Three-state cycle: not reimbursable → ⏳ Pending → ✓ Received (click 💼 on any row)",
+      "Tax page: Work Reimbursables card showing pending total (awaiting payment back) vs received, with per-transaction list and Mark Received button",
+      "Budget vs-spend, dashboard totals, and 6-month trend all exclude reimbursable expenses",
+      "Tax note: once reimbursed, the expense is not your cost and should not be claimed as a deduction"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v22",
+    "title": "Zeus Jnr Dog + Sparkline Date Labels",
+    "items": [
+      "Finance Pet redesigned as Zeus Jnr — black & white dog with floppy ears, body patches, blue collar, gold ZJ dog tag",
+      "Pet moods now expressed through dog-specific features: tail position (up/horizontal/drooping), tongue on happy, dark spots on head and body",
+      "Level labels updated to dog theme: Pup Zeus Jnr → Zeus Jnr → Good Boy → Champion",
+      "Dashboard stat tiles now show a clean white line sparkline (no coloured fill/dots) with date labels at bottom corners",
+      "sparklineLineSvg() helper: crisp white line, date range text (first → last month) inside the card",
+      "sparklineSvg() now handles single data point (dashed horizontal line) so NW and portfolio cards show something with only one snapshot"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v21",
+    "title": "Finance Pet (Tamagotchi) + Sparkline Expansion",
+    "items": [
+      "Finance Pet page: animated SVG character (Biscuit) driven by your finance score",
+      "Pet moods: happy/neutral/worried/sick/sleeping — each with unique animations + expressions",
+      "4 interaction buttons: Feed (savings goals), Exercise (SortSwipe), Bath (budgets), Treat (earned at 80%+ health)",
+      "Level 1–4 evolution based on finance score; crown at Level 4",
+      "Pet stats: Health (budget adherence), Fullness (savings rate), Happiness (finance score)",
+      "Activity log in localStorage; rename pet and save to settings",
+      "Sparklines on dashboard stat tiles: Month Spend, Month Income, Net (using 6-month trend)",
+      "Super balance card sparkline (balance history over time)",
+      "RBA sparkline improved: featured mode with full opacity, all dots labelled with date+rate tooltip",
+      "sparklineSvgFeatured() helper for standalone chart panels vs faint background version"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v20",
+    "title": "Sparklines + Merchant Logos + Draggable Chat",
+    "items": [
+      "All value cards now show a faint background sparkline (net worth, portfolio, crypto, investments, RBA cash rate)",
+      "Top Transactions card shows merchant logos and clean names from enrichment",
+      "Fixed RBA sparkline rendering (Alpine <template x-if> SVG namespace bug)",
+      "Net worth page stats card gets sparkline background",
+      "Chat FAB button is now draggable — tap to open, drag to reposition, position saved to localStorage"
+    ]
+  },
+  {
+    "date": "2026-03-04",
+    "version": "v19",
+    "title": "Key Insights Card + Gauge Fixes",
+    "items": [
+      "Dashboard: Key Insights card between stat tiles and quick actions",
+      "Insights: spending pace alert, MoM trend, bills due this week, uncategorised count, finance score, flagged items",
+      "Insights: colour-coded left border (red/amber/green/blue) per severity",
+      "Fixed Fear/Greed needle not rendering (Alpine <template x-if> SVG namespace bug)",
+      "Fixed CPI gauge needle invisible (:style string was replacing full inline style)"
+    ]
+  },
+  {
+    "date": "2026-03-04",
+    "version": "v18",
+    "title": "Market Pulse Enhancements",
+    "items": [
+      "Fixed app data loss bug — start.sh now always connects to correct database",
+      "Market Pulse: RBA rate history sparkline + last change date and basis points",
+      "Market Pulse: CPI/inflation gauge with RBA 2–3% target band visualisation",
+      "Market Pulse: Fear & Greed meter (CNN index) with semicircle SVG gauge",
+      "Market Pulse: Australian Finance news tab (SMH Business + ABC News + RBA Speeches)",
+      "Market Pulse: AI briefing now works (API key lookup fixed)",
+      "Market Pulse: News section split into Your Holdings tab and AU Finance tab"
+    ]
+  },
+  {
+    "date": "2026-03-04",
+    "version": "v17",
+    "title": "Mobile Budget Fix + Changelog Automation",
+    "items": [
+      "Budget page now stacks vertically on mobile (table + chart panel)",
+      "All budget columns now visible on mobile with horizontal scroll (ABS/wk, Last Month, Last 7d)",
+      "Changelog moved to changelog.json — auto-updated each session, no manual prompting needed",
+      "Personal data audit: all hardcoded names/locations/device IDs removed from public addon repo"
+    ]
+  },
+  {
+    "date": "2026-03-04",
+    "version": "v16",
+    "title": "Chatbot + Budgets + ABS Weekly",
+    "items": [
+      "Chatbot system prompt: always uses tools, never claims data unavailable",
+      "get_categories tool added to chatbot",
+      "Chat history persistence across page refreshes",
+      "21 March 2026 budgets created from 3-month spending averages",
+      "Budget/wk column on budget table (monthly ÷ 4.33)",
+      "ABS data now age-group-specific (all 6 groups)",
+      "Comparison Data Sources card + Changelog in Settings",
+      "ABS check-for-updates button (live ABS website fetch)"
+    ]
+  },
+  {
+    "date": "2026-03-03",
+    "version": "v15",
+    "title": "Price Refresh + Historical FX + Subscription Alerts + FY Export + Goal Types",
+    "items": [
+      "Investment prices auto-refresh on load if >24h stale",
+      "Historical AUD/USD rate at purchase date (Yahoo Finance)",
+      "Subscription price change alerts on Bills page (±5% threshold)",
+      "Tax FY Summary card with 8 stat tiles",
+      "Short-term / long-term goal types with tabs",
+      "Duplicate iOS header fix (merged into single header)",
+      "App autocomplete for description, bill name, ticker/name fields"
+    ]
+  },
+  {
+    "date": "2026-03-03",
+    "version": "v14",
+    "title": "Payslip Fix + Search + Reports + PWA + Recurring",
+    "items": [
+      "Payslip PDF view: pre-generated tokens fix Brave browser block",
+      "Transaction advanced filters (account, credit/debit, date range, amount)",
+      "Custom date range Reports page (income/spend, category bars, top merchants)",
+      "PWA install prompt for home screen",
+      "Full JSON data export/import",
+      "Recurring detection: confidence score, confirm/dismiss patterns",
+      "Multi-user support (separate data per user); SuperContribution user_id fix"
+    ]
+  },
+  {
+    "date": "2026-03-02",
+    "version": "v13",
+    "title": "Budget Alerts + Net Worth Forecast",
+    "items": [
+      "Budget push alerts at configurable threshold (default 80%), deduplicated per month",
+      "Net Worth Forecast: 1/3/5/10 year projection with editable return rate"
+    ]
+  },
+  {
+    "date": "2026-03-02",
+    "version": "v12",
+    "title": "Merchant Enrichment + ZBB",
+    "items": [
+      "Merchant name enrichment via Claude Haiku batch (clean names + logos)",
+      "Newsletter: Google Favicon logos in top expenses",
+      "Zero-Based Budgeting panel on Budget page with Auto-Fill from history"
+    ]
+  },
+  {
+    "date": "2026-03-01",
+    "version": "v11",
+    "title": "Demo Mode + Sankey + SortSwipe",
+    "items": [
+      "Demo mode: masks all personal data with deterministic fake values",
+      "Sankey diagram toggle on Dashboard spend chart (pure SVG)",
+      "SortSwipe page: Tinder-style card UI for categorise / tax flag / receipts"
+    ]
+  },
+  {
+    "date": "2026-02-28",
+    "version": "v10",
+    "title": "Integrations + Receipts + Audit",
+    "items": [
+      "Folder watcher: auto-import CSVs from watch directory every 30s",
+      "Receipt attachment: upload/serve/delete per transaction",
+      "Stake auto-sync (NYSE + ASX, AUD conversion)",
+      "Audit export: ZIP of deductible CSV + receipts + README",
+      "Gmail receipt correlation: matches emails to transactions by amount/date/merchant"
+    ]
+  },
+  {
+    "date": "2026-02-27",
+    "version": "v9",
+    "title": "Weekly Newsletter",
+    "items": [
+      "HTML email newsletter via Gmail SMTP: week/MTD summary, AI insights, action items",
+      "4 roadmap items + 3 feature suggestions with chatbot deep-links",
+      "Newsletter settings card (recipient, app URL, Send Now, Preview Data)"
+    ]
+  },
+  {
+    "date": "2026-02-26",
+    "version": "v8",
+    "title": "AI Chat Assistant",
+    "items": [
+      "Floating chat widget with Claude Haiku (tool-use loop)",
+      "8 tools: dashboard, budget, goals, score, investments, net worth, tax, run_sql",
+      "Suggested question chips, typing indicator, conversation history"
+    ]
+  },
+  {
+    "date": "2026-02-25",
+    "version": "v7",
+    "title": "Goals + Gamification + Streaks",
+    "items": [
+      "Savings goals (CRUD, contributions, HA notify on completion)",
+      "Finance Score 0–100 (savings rate, budget adherence, categorisation, bills)",
+      "8 achievement badges, streak tracking (green months + under-budget)",
+      "Monthly challenges (spend limit or save target)",
+      "Full Goals page with score breakdown, achievements grid, challenges"
+    ]
+  },
+  {
+    "date": "2026-02-24",
+    "version": "v6",
+    "title": "CGT + Dividends",
+    "items": [
+      "Acquisition lots (cost base), disposal recording, 50% CGT discount",
+      "Dividend tracking with franking credit auto-calculation",
+      "CGT + dividend summary cards on Tax page",
+      "Lots + dividends tables on Investments page"
+    ]
+  },
+  {
+    "date": "2026-02-23",
+    "version": "v5",
+    "title": "Super + ABS + Sparklines",
+    "items": [
+      "Superannuation tracker: balance history, ASFA retirement progress, projections",
+      "ABS badges on Budget page (weekly median by category)",
+      "Bulk payslip upload",
+      "Dashboard sparklines + trend arrows for Net Worth and Portfolio"
+    ]
+  },
+  {
+    "date": "2026-02-22",
+    "version": "v4",
+    "title": "Dashboard + Profile + Tax",
+    "items": [
+      "Dashboard drill-down stat cards + Net Worth/Portfolio widgets",
+      "Personal profile + ABS benchmarks (age/gender/state percentile bars on Insights)",
+      "Income tax estimator (payslip YTD → ATO brackets, LITO, Medicare, HELP)",
+      "Payslip AI upload (PDF → structured data, variation flags)",
+      "Gmail scanner (expense emails preview + import)"
+    ]
+  },
+  {
+    "date": "2026-02-21",
+    "version": "v3",
+    "title": "Investments",
+    "items": [
+      "Binance sync (HMAC-signed, AUD conversion)",
+      "Share holdings + Yahoo Finance prices (ASX + US)",
+      "Net Worth tracker (snapshots, chart)",
+      "Investment Transfer category (auto-detected on CSV import)"
+    ]
+  },
+  {
+    "date": "2026-02-20",
+    "version": "v2",
+    "title": "Notifications + Bills",
+    "items": [
+      "HA push notifications (bills/budget/flagged/monthly alerts)",
+      "Bill payment history, Pay modal, annual cost",
+      "Recurring transaction detector",
+      "Year-over-year spend trend toggle on Dashboard"
+    ]
+  },
+  {
+    "date": "2026-02-19",
+    "version": "v1",
+    "title": "Foundation",
+    "items": [
+      "CSV import (Macquarie format), AI categorisation (Claude Haiku)",
+      "Manual transaction entry, bulk edit, export to CSV",
+      "Merchant analytics page",
+      "Dashboard with income/spend/savings summary, category chart"
+    ]
+  }
+]

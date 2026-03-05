@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
-from datetime import date
+from datetime import date, datetime
 from typing import Optional, List
 from sqlmodel import Field, Session, SQLModel, create_engine, select, func
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:////config/finance_tracker/finance.db")
+_DATA_DIR = os.environ.get("FINANCE_DATA_DIR", "/data")
+DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite:////{_DATA_DIR}/finance.db")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 
@@ -24,68 +25,92 @@ def create_db():
 # Models — no back-populates (avoids SQLModel generic-list annotation issues)
 # ---------------------------------------------------------------------------
 
+class User(SQLModel, table=True):
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    name:         str
+    password_hash: str = ""          # pbkdf2_hmac sha256; empty = no password set yet
+    color_hex:    str = "#6366f1"
+    created_at:   str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class UserSession(SQLModel, table=True):
+    token:      str = Field(primary_key=True)
+    user_id:    int = Field(foreign_key="user.id")
+    created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    expires_at: str  # ISO datetime string
+
+
 class Account(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    bank: str = "Macquarie"
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    name:         str
+    bank:         str = "Macquarie"
     account_number: str = ""
+    user_id:      int = Field(default=1)
 
 
 class Category(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
-    colour: str = "#6366f1"
-    icon: str = "mdi:tag"
-    is_income: bool = False
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    name:          str
+    colour:        str = "#6366f1"
+    icon:          str = "mdi:tag"
+    is_income:     bool = False
     is_tax_relevant: bool = False
-    parent_id: Optional[int] = Field(default=None, foreign_key="category.id")
+    parent_id:     Optional[int] = Field(default=None, foreign_key="category.id")
 
 
 class Transaction(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    account_id: Optional[int] = Field(default=None, foreign_key="account.id")
-    date: date
-    description: str
-    amount: float  # always positive
-    is_credit: bool = False
-    category_id: Optional[int] = Field(default=None, foreign_key="category.id")
-    is_flagged: bool = False
-    is_reviewed: bool = False
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    account_id:   Optional[int] = Field(default=None, foreign_key="account.id")
+    date:         date
+    description:  str
+    amount:       float  # always positive
+    is_credit:    bool = False
+    category_id:  Optional[int] = Field(default=None, foreign_key="category.id")
+    is_flagged:   bool = False
+    is_reviewed:  bool = False
     tax_deductible: bool = False
     tax_category: Optional[str] = None
-    notes: Optional[str] = None
+    notes:        Optional[str] = None
     receipt_path: Optional[str] = None  # path to saved receipt/email file
-    raw_hash: str = Field(index=True)  # SHA256 for dedup
+    raw_hash:     str = Field(index=True)  # SHA256 for dedup
+    is_overseas:  bool = Field(default=False)
+    currency_code: Optional[str] = None   # e.g. "USD", "THB", "VND"
+    is_reimbursable: bool = Field(default=False)   # work expense to be paid back
+    reimbursement_received: bool = Field(default=False)  # True once employer has paid back
+    user_id:      int = Field(default=1)
 
 
 class Budget(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
+    id:          Optional[int] = Field(default=None, primary_key=True)
     category_id: int = Field(foreign_key="category.id")
-    month: int  # 1–12
-    year: int
+    month:       int  # 1–12
+    year:        int
     amount_cents: int  # store as cents to avoid float issues
+    user_id:     int = Field(default=1)
 
 
 class Bill(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    name: str
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    name:        str
     amount_cents: int
-    frequency: str = "monthly"  # weekly, fortnightly, monthly, quarterly, annual
-    next_due: Optional[date] = None
+    frequency:   str = "monthly"  # weekly, fortnightly, monthly, quarterly, annual
+    next_due:    Optional[date] = None
     category_id: Optional[int] = Field(default=None, foreign_key="category.id")
-    is_active: bool = True
+    is_active:   bool = True
+    user_id:     int = Field(default=1)
 
 
 class BillPayment(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    bill_id: int = Field(foreign_key="bill.id")
-    paid_date: date
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    bill_id:     int = Field(foreign_key="bill.id")
+    paid_date:   date
     amount_cents: int
-    notes: Optional[str] = None
+    notes:       Optional[str] = None
+    user_id:     int = Field(default=1)
 
 
 class Setting(SQLModel, table=True):
-    key: str = Field(primary_key=True)
+    key:   str = Field(primary_key=True)
     value: str = ""
 
 
@@ -102,6 +127,7 @@ class CryptoHolding(SQLModel, table=True):
     cost_basis_aud: float = 0.0                  # qty * avg_cost_aud
     gain_aud:       float = 0.0                  # value_aud - cost_basis_aud
     gain_pct:       float = 0.0                  # gain as % of cost basis
+    user_id:        int = Field(default=1)
 
 
 class CryptoTrade(SQLModel, table=True):
@@ -117,6 +143,7 @@ class CryptoTrade(SQLModel, table=True):
     price_aud:   float = 0.0                  # price in AUD at trade time
     fee_qty:     float = 0.0
     fee_asset:   str = ""
+    user_id:     int = Field(default=1)
 
 
 class ShareHolding(SQLModel, table=True):
@@ -132,8 +159,11 @@ class ShareHolding(SQLModel, table=True):
     gain_pct:         float = 0.0
     currency:         str = "AUD"            # quote currency from Yahoo
     price_fetched_at: Optional[str] = None
+    purchase_date:    Optional[date] = None  # date of purchase (for historical FX lookup)
+    purchase_fx_rate: Optional[float] = None # AUD per 1 USD at time of purchase
     broker:           str = "stake"          # "stake" | "chess" | "other"
     notes:            Optional[str] = None
+    user_id:          int = Field(default=1)
 
 
 class NetWorthSnapshot(SQLModel, table=True):
@@ -158,6 +188,7 @@ class NetWorthSnapshot(SQLModel, table=True):
     total_assets:      float = 0.0
     total_liabilities: float = 0.0
     net_worth:         float = 0.0
+    user_id:           int = Field(default=1)
 
 
 class AcquisitionLot(SQLModel, table=True):
@@ -170,6 +201,7 @@ class AcquisitionLot(SQLModel, table=True):
     cost_per_unit_aud: float                     # purchase price per unit in AUD
     brokerage_aud:    float = 0.0                # brokerage paid on purchase
     notes:            Optional[str] = None
+    user_id:          int = Field(default=1)
 
 
 class Disposal(SQLModel, table=True):
@@ -185,6 +217,7 @@ class Disposal(SQLModel, table=True):
     gain_aud:            float = 0.0             # computed: (proceeds - cost - brokerage) * qty
     discount_eligible:   bool = False            # True if held > 12 months
     notes:               Optional[str] = None
+    user_id:             int = Field(default=1)
 
 
 class Dividend(SQLModel, table=True):
@@ -197,6 +230,7 @@ class Dividend(SQLModel, table=True):
     franking_credits_aud: float = 0.0            # imputation credits (AUD)
     franking_pct:        float = 0.0             # 0–100, e.g. 100 = fully franked
     notes:               Optional[str] = None
+    user_id:             int = Field(default=1)
 
 
 class SuperSnapshot(SQLModel, table=True):
@@ -206,6 +240,7 @@ class SuperSnapshot(SQLModel, table=True):
     balance_aud:   float = 0.0
     notes:         Optional[str] = None
     created_at:    Optional[str] = None
+    user_id:       int = Field(default=1)
 
 
 class SuperContribution(SQLModel, table=True):
@@ -216,11 +251,13 @@ class SuperContribution(SQLModel, table=True):
     type:              str = "employer"   # employer | employee | voluntary
     source:            Optional[str] = None
     notes:             Optional[str] = None
+    user_id:           int = Field(default=1)
 
 
 class Goal(SQLModel, table=True):
     id:           Optional[int] = Field(default=None, primary_key=True)
     name:         str
+    goal_type:    str = "long_term"                 # "short_term" | "long_term"
     target_cents: int                               # target amount in cents
     current_cents: int = 0                          # manually tracked progress
     target_date:  Optional[date] = None
@@ -228,6 +265,7 @@ class Goal(SQLModel, table=True):
     is_complete:  bool = False
     notes:        Optional[str] = None
     created_at:   Optional[str] = None
+    user_id:      int = Field(default=1)
 
 
 class GoalContribution(SQLModel, table=True):
@@ -236,13 +274,15 @@ class GoalContribution(SQLModel, table=True):
     contributed_date: date
     amount_cents:     int
     notes:            Optional[str] = None
+    user_id:          int = Field(default=1)
 
 
 class Achievement(SQLModel, table=True):
     """Unlocked achievement badges."""
-    key:         str = Field(primary_key=True)   # e.g. "first_green_month"
+    key:         str = Field(primary_key=True)   # e.g. "first_green_month" (prefixed "uid:key" for multi-user)
     unlocked_at: Optional[str] = None            # ISO datetime
     data_json:   Optional[str] = None            # extra context JSON
+    user_id:     int = Field(default=1)
 
 
 class Challenge(SQLModel, table=True):
@@ -256,40 +296,78 @@ class Challenge(SQLModel, table=True):
     year:           int
     is_active:      bool = True
     is_complete:    bool = False
+    user_id:        int = Field(default=1)
 
 
 class Payslip(SQLModel, table=True):
-    id: Optional[int] = Field(default=None, primary_key=True)
-    pay_date: date
-    period_start: Optional[date] = None
-    period_end: Optional[date] = None
-    employer: Optional[str] = None
-    pay_frequency: Optional[str] = None          # fortnightly, weekly, monthly
-    gross_pay_cents: int = 0
-    net_pay_cents: int = 0
+    id:                Optional[int] = Field(default=None, primary_key=True)
+    pay_date:          date
+    period_start:      Optional[date] = None
+    period_end:        Optional[date] = None
+    employer:          Optional[str] = None
+    pay_frequency:     Optional[str] = None          # fortnightly, weekly, monthly
+    gross_pay_cents:   int = 0
+    net_pay_cents:     int = 0
     tax_withheld_cents: int = 0
-    super_cents: int = 0
+    super_cents:       int = 0
     annual_leave_hours: Optional[float] = None
-    sick_leave_hours: Optional[float] = None
+    sick_leave_hours:  Optional[float] = None
     long_service_hours: Optional[float] = None
-    ytd_gross_cents: Optional[int] = None
-    ytd_tax_cents: Optional[int] = None
-    ytd_super_cents: Optional[int] = None
-    hours_worked: Optional[float] = None
-    allowances_json: Optional[str] = None        # JSON list of {name, amount}
-    deductions_json: Optional[str] = None        # JSON list of {name, amount}
-    flags_json: Optional[str] = None             # JSON list of flag strings
-    raw_extracted: Optional[str] = None          # full AI-extracted JSON
-    source: str = "upload"                       # upload | gmail
-    filename: Optional[str] = None
-    is_reviewed: bool = False
+    ytd_gross_cents:   Optional[int] = None
+    ytd_tax_cents:     Optional[int] = None
+    ytd_super_cents:   Optional[int] = None
+    hours_worked:      Optional[float] = None
+    allowances_json:   Optional[str] = None        # JSON list of {name, amount}
+    deductions_json:   Optional[str] = None        # JSON list of {name, amount}
+    flags_json:        Optional[str] = None        # JSON list of flag strings
+    raw_extracted:     Optional[str] = None        # full AI-extracted JSON
+    source:            str = "upload"              # upload | gmail
+    filename:          Optional[str] = None
+    is_reviewed:       bool = False
+    matched_txn_id:    Optional[int] = None        # soft-link to matched bank transaction
+    user_id:           int = Field(default=1)
+
+
+class RecurringPattern(SQLModel, table=True):
+    """Detected (or manually confirmed) recurring transaction pattern."""
+    id:          Optional[int] = Field(default=None, primary_key=True)
+    norm_key:    str                             # normalised merchant key (upper, no numbers)
+    display_name: str                            # human-readable merchant name
+    avg_amount:  float = 0.0
+    frequency:   str = "monthly"                # weekly | fortnightly | monthly | quarterly | annual
+    occurrences: int = 0
+    last_date:   Optional[date] = None
+    confidence:  float = 0.0                    # 0.0–1.0
+    status:      str = "suggested"              # suggested | confirmed | dismissed
+    bill_id:     Optional[int] = None           # linked bill (if converted)
+    user_id:     int = Field(default=1)
 
 
 class MerchantEnrichment(SQLModel, table=True):
     __tablename__ = "merchant_enrichment"
-    raw_key: str = Field(primary_key=True)   # uppercase desc[:50]
-    clean_name: str                           # human-readable name
-    domain: Optional[str] = Field(default=None)  # for logo lookup
+    raw_key:    str = Field(primary_key=True)   # uppercase desc[:50]
+    clean_name: str                              # human-readable name
+    domain:     Optional[str] = Field(default=None)  # for logo lookup
+
+
+class ChatConversation(SQLModel, table=True):
+    __tablename__ = "chat_conversation"
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    user_id:       int
+    title:         str = ""          # auto-set from first user message (≤80 chars)
+    created_at:    str = Field(default_factory=lambda: __import__("datetime").datetime.now().isoformat(timespec="seconds"))
+    updated_at:    str = Field(default_factory=lambda: __import__("datetime").datetime.now().isoformat(timespec="seconds"))
+    message_count: int = 0
+
+
+class ChatHistory(SQLModel, table=True):
+    __tablename__ = "chat_history"
+    id:              Optional[int] = Field(default=None, primary_key=True)
+    user_id:         int
+    conversation_id: Optional[int] = Field(default=None, foreign_key="chat_conversation.id")
+    role:            str   # "user" | "assistant"
+    content:         str
+    created_at:      str = Field(default_factory=lambda: __import__("datetime").datetime.now().isoformat(timespec="seconds"))
 
 
 # ---------------------------------------------------------------------------
@@ -366,7 +444,23 @@ DEFAULT_SETTINGS = {
     "pace_alerts_enabled": "1",
     "pace_alert_threshold": "100",
     "pace_alert_log": "{}",
+    "basiq_api_key": "",
+    "basiq_user_id": "",
+    "basiq_last_sync": "",
+    "basiq_last_sync_count": "",
+    "mcp_api_key": "",
+    "payslip_watch_enabled": "1",
 }
+
+# Tables that need a user_id column added for existing DBs
+_USER_ID_TABLES = [
+    "account", "transaction", "budget", "bill", "billpayment",
+    "goal", "goalcontribution", "achievement", "challenge",
+    "cryptoholding", "cryptotrade", "shareholding",
+    "acquisitionlot", "disposal", "dividend",
+    "networthsnapshot", "supersnapshot", "supercontribution", "payslip",
+    "recurringpattern",
+]
 
 
 def _migrate():
@@ -378,10 +472,42 @@ def _migrate():
         ("cryptoholding", "gain_aud",        "REAL DEFAULT 0.0"),
         ("cryptoholding", "gain_pct",        "REAL DEFAULT 0.0"),
     ]
+    # Overseas transaction fields
+    new_cols += [
+        ("transaction", "is_overseas", "INTEGER DEFAULT 0"),
+        ("transaction", "currency_code", "TEXT"),
+    ]
+    # Reimbursable work expense fields
+    new_cols += [
+        ("transaction", "is_reimbursable", "INTEGER DEFAULT 0"),
+        ("transaction", "reimbursement_received", "INTEGER DEFAULT 0"),
+    ]
+    # Chat conversation tracking
+    new_cols += [
+        ("chat_history", "conversation_id", "INTEGER"),
+    ]
+    # Payslip-transaction matching
+    new_cols += [
+        ("payslip", "matched_txn_id", "INTEGER"),
+    ]
+    # Historical FX rate on share purchases
+    new_cols += [
+        ("shareholding", "purchase_date",    "TEXT"),
+        ("shareholding", "purchase_fx_rate", "REAL"),
+    ]
+    # Goal type (short_term / long_term)
+    new_cols += [
+        ("goal", "goal_type", "TEXT DEFAULT 'long_term'"),
+    ]
+
+    # Add user_id to all tables that need it
+    for tbl in _USER_ID_TABLES:
+        new_cols.append((tbl, "user_id", "INTEGER DEFAULT 1 NOT NULL"))
+
     with Session(engine) as session:
         for table, col, typedef in new_cols:
             try:
-                session.exec(text(f"ALTER TABLE {table} ADD COLUMN {col} {typedef}"))
+                session.exec(text(f'ALTER TABLE "{table}" ADD COLUMN {col} {typedef}'))
                 session.commit()
             except Exception:
                 pass  # column already exists
@@ -389,6 +515,12 @@ def _migrate():
 
 def _seed_defaults():
     with Session(engine) as session:
+        # Users — seed first user (Ryan) if none exist
+        user_count = session.exec(select(func.count()).select_from(User)).one()
+        if user_count == 0:
+            session.add(User(id=1, name="Ryan", color_hex="#6366f1"))
+            session.commit()
+
         # Categories
         cat_count = session.exec(select(func.count()).select_from(Category)).one()
         if cat_count == 0:
@@ -404,7 +536,7 @@ def _seed_defaults():
         # Default account
         acc_count = session.exec(select(func.count()).select_from(Account)).one()
         if acc_count == 0:
-            session.add(Account(name="Macquarie Transaction", bank="Macquarie"))
+            session.add(Account(name="Macquarie Transaction", bank="Macquarie", user_id=1))
 
         # Ensure Investment Transfer category exists (idempotent for existing DBs)
         inv_cat = session.exec(
