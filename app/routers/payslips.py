@@ -256,35 +256,59 @@ def payslip_summary(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Latest leave balances, YTD totals, pay stats."""
-    latest = session.exec(
-        select(Payslip).where(Payslip.user_id == current_user.id).order_by(Payslip.pay_date.desc()).limit(1)
-    ).first()
-    if not latest:
+    """Latest leave balances, YTD totals, pay stats — combined across all employers."""
+    all_payslips = session.exec(
+        select(Payslip).where(Payslip.user_id == current_user.id).order_by(Payslip.pay_date.desc())
+    ).all()
+    if not all_payslips:
         return {"has_data": False}
 
-    # YTD from latest payslip (most accurate)
+    # Get the most recent payslip per employer
+    seen_employers: set = set()
+    latest_per_employer: list = []
+    for p in all_payslips:
+        key = (p.employer or "").strip().lower()
+        if key not in seen_employers:
+            seen_employers.add(key)
+            latest_per_employer.append(p)
+
+    # Sum YTD figures across all employers
+    ytd_gross = sum((p.ytd_gross_cents or 0) for p in latest_per_employer) / 100
+    ytd_tax   = sum((p.ytd_tax_cents or 0) for p in latest_per_employer) / 100
+    ytd_super = sum((p.ytd_super_cents or 0) for p in latest_per_employer) / 100
+
+    # Sum leave balances across employers (each employer tracks leave independently)
+    annual_leave = sum((p.annual_leave_hours or 0) for p in latest_per_employer)
+    sick_leave   = sum((p.sick_leave_hours or 0) for p in latest_per_employer)
+    long_service = sum((p.long_service_hours or 0) for p in latest_per_employer)
+
+    latest = latest_per_employer[0]  # most recent overall for display fields
+
+    multi_employer = len(latest_per_employer) > 1
+
+    unreviewed_flags = sum(
+        1 for p in all_payslips
+        if not p.is_reviewed and json.loads(p.flags_json or "[]")
+    )
+
     return {
         "has_data": True,
         "latest_pay_date": str(latest.pay_date),
-        "employer": latest.employer,
-        "annual_leave_hours": latest.annual_leave_hours,
-        "sick_leave_hours": latest.sick_leave_hours,
-        "long_service_hours": latest.long_service_hours,
-        "ytd_gross": (latest.ytd_gross_cents or 0) / 100,
-        "ytd_tax": (latest.ytd_tax_cents or 0) / 100,
-        "ytd_super": (latest.ytd_super_cents or 0) / 100,
-        "ytd_net": ((latest.ytd_gross_cents or 0) - (latest.ytd_tax_cents or 0)) / 100,
+        "employer": latest.employer if not multi_employer else f"{len(latest_per_employer)} employers",
+        "multi_employer": multi_employer,
+        "employers": [p.employer for p in latest_per_employer],
+        "annual_leave_hours": annual_leave,
+        "sick_leave_hours": sick_leave,
+        "long_service_hours": long_service,
+        "ytd_gross": ytd_gross,
+        "ytd_tax": ytd_tax,
+        "ytd_super": ytd_super,
+        "ytd_net": ytd_gross - ytd_tax,
         "latest_gross": latest.gross_pay_cents / 100,
         "latest_net": latest.net_pay_cents / 100,
         "latest_super": latest.super_cents / 100,
         "pay_frequency": latest.pay_frequency,
-        "unreviewed_flags": sum(
-            1 for p in session.exec(
-                select(Payslip).where(Payslip.user_id == current_user.id, Payslip.is_reviewed == False)
-            ).all()
-            if json.loads(p.flags_json or "[]")
-        ),
+        "unreviewed_flags": unreviewed_flags,
     }
 
 

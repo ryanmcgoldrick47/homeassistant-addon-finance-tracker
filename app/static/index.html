@@ -2956,22 +2956,22 @@
         <!-- Leave balance summary -->
         <div x-show="payslipSummary.has_data" class="grid grid-4 gap-3" style="margin-bottom:16px;">
           <div class="card-sm">
-            <div class="stat-label">Annual Leave</div>
+            <div class="stat-label">Annual Leave <span x-show="payslipSummary.multi_employer" style="font-size:10px;color:var(--muted);">(combined)</span></div>
             <div class="stat-value amt" style="color:var(--accent);" x-text="(payslipSummary.annual_leave_hours || 0).toFixed(1) + ' hrs'"></div>
             <div style="font-size:11px;color:var(--muted);margin-top:4px;" x-text="((payslipSummary.annual_leave_hours || 0) / 7.6).toFixed(1) + ' days'"></div>
           </div>
           <div class="card-sm">
-            <div class="stat-label">Sick / Personal</div>
+            <div class="stat-label">Sick / Personal <span x-show="payslipSummary.multi_employer" style="font-size:10px;color:var(--muted);">(combined)</span></div>
             <div class="stat-value amt" style="color:var(--green);" x-text="(payslipSummary.sick_leave_hours || 0).toFixed(1) + ' hrs'"></div>
             <div style="font-size:11px;color:var(--muted);margin-top:4px;" x-text="((payslipSummary.sick_leave_hours || 0) / 7.6).toFixed(1) + ' days'"></div>
           </div>
           <div class="card-sm">
-            <div class="stat-label">YTD Gross</div>
+            <div class="stat-label">YTD Gross <span x-show="payslipSummary.multi_employer" style="font-size:10px;color:var(--muted);">(all employers)</span></div>
             <div class="stat-value amt" x-text="'$' + fmt(payslipSummary.ytd_gross)"></div>
             <div style="font-size:11px;color:var(--muted);margin-top:4px;" x-text="'Tax: $' + fmt(payslipSummary.ytd_tax)"></div>
           </div>
           <div class="card-sm">
-            <div class="stat-label">YTD Super</div>
+            <div class="stat-label">YTD Super <span x-show="payslipSummary.multi_employer" style="font-size:10px;color:var(--muted);">(all employers)</span></div>
             <div class="stat-value amt" style="color:var(--amber);" x-text="'$' + fmt(payslipSummary.ytd_super)"></div>
             <div style="font-size:11px;color:var(--muted);margin-top:4px;" x-show="payslipSummary.latest_pay_date" x-text="'Last pay: ' + payslipSummary.latest_pay_date"></div>
           </div>
