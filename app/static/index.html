@@ -4567,6 +4567,11 @@
               <div><label class="form-label">HA Base URL</label>
                 <input type="text" x-model="settings.ha_url" placeholder="http://hassio/core" />
               </div>
+              <div>
+                <label class="form-label">Finance App URL <span style="font-size:11px;color:var(--muted);font-weight:400;">(for notification deep-links)</span></label>
+                <input type="text" x-model="settings.finance_app_url" placeholder="https://abc123.ui.nabu.casa/api/finance_proxy" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">When you tap a notification, it opens this URL. Set to your Nabu Casa or local Finance Tracker URL. Leave blank to disable deep-links.</p>
+              </div>
               <div style="display:flex;flex-direction:column;gap:8px;">
                 <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;">
                   <div style="display:flex;align-items:center;gap:8px;">
@@ -8090,23 +8095,18 @@ function app() {
     },
 
     async viewPayslipPdf(payslipId, name) {
-      // Render PDF inline in a modal — avoids ALL popup/blob-URL blocking
-      // (Brave ERR_BLOCKED_BY_CLIENT on blob:https://nabu.casa/...).
-      if (this.pdfModal.url) { URL.revokeObjectURL(this.pdfModal.url); }
+      // Request a short-lived server-side view token, then point the iframe at the
+      // token URL directly — no blob: URL, so Brave/Chrome shields can't block it.
       this.pdfModal = { open: true, url: null, loading: true, name: name || `Payslip #${payslipId}` };
       const BASE = window.FINANCE_BASE || '';
       try {
-        const res = await fetch(BASE + `/api/payslips/${payslipId}/pdf`, {
-          headers: { 'Authorization': 'Bearer ' + this.token },
-        });
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
+        const res = await this.api(`/api/payslips/${payslipId}/pdf-view`, { method: 'POST' });
+        if (!res?.view_path) {
           this.pdfModal.open = false;
-          this.showToast('Error: ' + (err.detail || 'Could not load PDF'), 5000);
+          this.showToast('Could not generate PDF link', 4000);
           return;
         }
-        const blob = await res.blob();
-        this.pdfModal.url = URL.createObjectURL(blob);
+        this.pdfModal.url = BASE + res.view_path;
       } catch(e) {
         this.pdfModal.open = false;
         this.showToast('Error loading PDF: ' + e.message, 5000);
@@ -8115,7 +8115,6 @@ function app() {
       }
     },
     closePdfModal() {
-      if (this.pdfModal.url) URL.revokeObjectURL(this.pdfModal.url);
       this.pdfModal = { open: false, url: null, loading: false, name: '' };
     },
 
@@ -8309,7 +8308,7 @@ function app() {
       // Hash routing: navigate to page from URL on load (supports email deep links)
       const VALID_PAGES = ['dashboard','transactions','merchants','import','categories',
         'budgets','tax','bills','flags','insights','payslips','crypto','investments',
-        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet'];
+        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet','reports'];
       const hash = window.location.hash.slice(1);
       if (hash && VALID_PAGES.includes(hash)) {
         this.page = hash;

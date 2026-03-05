@@ -33,8 +33,22 @@ def _get_notify_config(session: Session) -> tuple[str, str, list[str]]:
     return ha_url, token, targets
 
 
+def _deep_link_data(session: Session, page: str = "dashboard") -> dict:
+    """Build notification data payload with deep-link URL for HA companion app."""
+    app_url = get_setting(session, "finance_app_url", "").rstrip("/")
+    if not app_url:
+        return {}
+    url = f"{app_url}#{page}"
+    # iOS companion uses "url"; Android companion uses "clickAction" — include both
+    return {"url": url, "clickAction": url}
+
+
 async def _send_notification(ha_url: str, token: str, targets: list[str],
-                              title: str, message: str) -> list[dict]:
+                              title: str, message: str,
+                              notification_data: dict | None = None) -> list[dict]:
+    payload: dict = {"title": title, "message": message}
+    if notification_data:
+        payload["data"] = notification_data
     sent = []
     async with httpx.AsyncClient(timeout=10) as client:
         for target in targets:
@@ -42,7 +56,7 @@ async def _send_notification(ha_url: str, token: str, targets: list[str],
                 resp = await client.post(
                     f"{ha_url}/api/services/notify/{target}",
                     headers={"Authorization": f"Bearer {token}"},
-                    json={"title": title, "message": message},
+                    json=payload,
                 )
                 sent.append({"target": target, "status": resp.status_code})
             except Exception as e:
@@ -51,7 +65,7 @@ async def _send_notification(ha_url: str, token: str, targets: list[str],
 
 
 class TestBody(BaseModel):
-    message: Optional[str] = "Finance Tracker notifications are working!"
+    message: Optional[str] = "Finance Tracker notifications are working! 🎉"
 
 
 @router.post("/test")
@@ -66,7 +80,8 @@ async def test_notification(
         return {"ok": False, "reason": "No HA token configured. Add a Long-Lived Access Token in Settings."}
     if not targets:
         return {"ok": False, "reason": "No notify targets configured."}
-    sent = await _send_notification(ha_url, token, targets, "Finance Tracker", body.message)
+    data = _deep_link_data(session, "dashboard")
+    sent = await _send_notification(ha_url, token, targets, "✅ Finance Tracker", body.message, data)
     return {"ok": True, "sent": sent}
 
 
@@ -103,15 +118,17 @@ async def check_and_notify(
         lines = []
         for b in due_soon:
             when = "today" if b.next_due == today else "tomorrow"
-            lines.append(f"• {b.name}: ${b.amount_cents/100:.2f} due {when}")
-        msg = "\n".join(lines)
+            dot = "🔴" if when == "today" else "🟡"
+            lines.append(f"{dot} {b.name}: ${b.amount_cents/100:.2f} due {when}")
+        count = len(due_soon)
+        title = f"💳 {count} Bill{'s' if count > 1 else ''} Due {'Today' if count == 1 and due_soon[0].next_due == today else 'Soon'}"
+        msg = "Tap to view your upcoming bills:\n" + "\n".join(lines)
+        data = _deep_link_data(session, "bills")
         if token and targets:
-            sent = await _send_notification(ha_url, token, targets,
-                                            f"{len(due_soon)} Bill{'s' if len(due_soon)>1 else ''} Due Soon",
-                                            msg)
-            notifications_sent.append({"type": "bills_due", "count": len(due_soon), "sent": sent})
+            sent = await _send_notification(ha_url, token, targets, title, msg, data)
+            notifications_sent.append({"type": "bills_due", "count": count, "sent": sent})
         else:
-            notifications_sent.append({"type": "bills_due", "count": len(due_soon), "skipped": skipped_reason})
+            notifications_sent.append({"type": "bills_due", "count": count, "skipped": skipped_reason})
 
     # ── 2. Budget categories over 100% + approaching threshold ──
     this_month = today.month
@@ -156,11 +173,12 @@ async def check_and_notify(
         pct = spend / budget_amt * 100
 
         if spend > budget_amt:
-            over_budget.append(f"• {cat.name}: ${spend:.2f} / ${budget_amt:.2f}")
+            over_pct = round(pct - 100)
+            over_budget.append(f"🔴 {cat.name}: ${spend:.0f} / ${budget_amt:.0f} (+{over_pct}% over)")
         elif alerts_enabled and pct >= alert_threshold:
             key = f"{period}_{budget.category_id}_{int(alert_threshold)}"
             if key not in alert_log:
-                approaching.append(f"• {cat.name}: {pct:.0f}% used (${spend:.0f} / ${budget_amt:.0f})")
+                approaching.append(f"🟡 {cat.name}: {pct:.0f}% used (${spend:.0f} of ${budget_amt:.0f})")
                 alert_log[key] = str(today)
 
     # Save updated dedup log
@@ -171,24 +189,26 @@ async def check_and_notify(
         session.commit()
 
     if over_budget:
-        msg = "Categories over budget this month:\n" + "\n".join(over_budget)
+        count = len(over_budget)
+        title = f"🚨 {count} Budget{'s' if count > 1 else ''} Exceeded"
+        msg = "You've gone over budget this month:\n" + "\n".join(over_budget)
+        data = _deep_link_data(session, "budgets")
         if token and targets:
-            sent = await _send_notification(ha_url, token, targets,
-                                            f"{len(over_budget)} Budget{'s' if len(over_budget)>1 else ''} Exceeded",
-                                            msg)
-            notifications_sent.append({"type": "budget_exceeded", "count": len(over_budget), "sent": sent})
+            sent = await _send_notification(ha_url, token, targets, title, msg, data)
+            notifications_sent.append({"type": "budget_exceeded", "count": count, "sent": sent})
         else:
-            notifications_sent.append({"type": "budget_exceeded", "count": len(over_budget), "skipped": skipped_reason})
+            notifications_sent.append({"type": "budget_exceeded", "count": count, "skipped": skipped_reason})
 
     if approaching:
-        msg = f"Approaching {alert_threshold:.0f}% of budget:\n" + "\n".join(approaching)
+        count = len(approaching)
+        title = f"⚠️ {count} Budget{'s' if count > 1 else ''} at {alert_threshold:.0f}%"
+        msg = f"Getting close to your spending limit:\n" + "\n".join(approaching)
+        data = _deep_link_data(session, "budgets")
         if token and targets:
-            sent = await _send_notification(ha_url, token, targets,
-                                            f"{len(approaching)} Budget{'s' if len(approaching)>1 else ''} at {alert_threshold:.0f}%",
-                                            msg)
-            notifications_sent.append({"type": "budget_approaching", "count": len(approaching), "sent": sent})
+            sent = await _send_notification(ha_url, token, targets, title, msg, data)
+            notifications_sent.append({"type": "budget_approaching", "count": count, "sent": sent})
         else:
-            notifications_sent.append({"type": "budget_approaching", "count": len(approaching), "skipped": skipped_reason})
+            notifications_sent.append({"type": "budget_approaching", "count": count, "skipped": skipped_reason})
 
     # ── 3. Spending pace alerts ──
     pace_enabled = get_setting(session, "pace_alerts_enabled", "1") == "1"
@@ -221,12 +241,12 @@ async def check_and_notify(
             budget_amt = budget.amount_cents / 100
             if budget_amt <= 0 or spend <= 0:
                 continue
-            projected_pct = (spend / days_elapsed * days_in_month) / budget_amt * 100
+            projected = spend / days_elapsed * days_in_month
+            projected_pct = projected / budget_amt * 100
             pkey = f"{period}_{budget.category_id}_pace"
             if projected_pct >= pace_threshold and spend < budget_amt and pkey not in pace_log:
                 on_pace_to_overspend.append(
-                    f"• {cat.name}: on pace for {projected_pct:.0f}% (${spend:.0f} spent, "
-                    f"${spend / days_elapsed * days_in_month:.0f} projected)"
+                    f"📈 {cat.name}: {projected_pct:.0f}% projected (${spend:.0f} spent → ${projected:.0f} est.)"
                 )
                 pace_log[pkey] = str(today)
 
@@ -237,14 +257,15 @@ async def check_and_notify(
             session.commit()
 
         if on_pace_to_overspend:
-            msg = f"Spending pace exceeds budget (projected >{pace_threshold:.0f}%):\n" + "\n".join(on_pace_to_overspend)
+            count = len(on_pace_to_overspend)
+            title = f"📊 {count} Budget{'s' if count > 1 else ''} On Track to Overspend"
+            msg = f"Your spending pace is trending over budget:\n" + "\n".join(on_pace_to_overspend)
+            data = _deep_link_data(session, "budgets")
             if token and targets:
-                sent = await _send_notification(ha_url, token, targets,
-                                                f"{len(on_pace_to_overspend)} Budget{'s' if len(on_pace_to_overspend)>1 else ''} On Track to Overspend",
-                                                msg)
-                notifications_sent.append({"type": "spend_pace", "count": len(on_pace_to_overspend), "sent": sent})
+                sent = await _send_notification(ha_url, token, targets, title, msg, data)
+                notifications_sent.append({"type": "spend_pace", "count": count, "sent": sent})
             else:
-                notifications_sent.append({"type": "spend_pace", "count": len(on_pace_to_overspend), "skipped": skipped_reason})
+                notifications_sent.append({"type": "spend_pace", "count": count, "skipped": skipped_reason})
 
     # ── 4. Flagged transactions needing review ──
     flagged_count = session.exec(
@@ -256,11 +277,14 @@ async def check_and_notify(
     ).one()
 
     if flagged_count > 0:
-        msg = f"You have {flagged_count} transaction{'s' if flagged_count > 1 else ''} flagged for review in Finance Tracker."
+        title = f"🚩 {flagged_count} Transaction{'s' if flagged_count > 1 else ''} Need Review"
+        msg = (
+            f"You have {flagged_count} transaction{'s' if flagged_count > 1 else ''} flagged for review.\n"
+            f"Open Finance Tracker to categorise and clear {'them' if flagged_count > 1 else 'it'}."
+        )
+        data = _deep_link_data(session, "flags")
         if token and targets:
-            sent = await _send_notification(ha_url, token, targets,
-                                            f"{flagged_count} Transaction{'s' if flagged_count>1 else ''} Need Review",
-                                            msg)
+            sent = await _send_notification(ha_url, token, targets, title, msg, data)
             notifications_sent.append({"type": "flagged", "count": int(flagged_count), "sent": sent})
         else:
             notifications_sent.append({"type": "flagged", "count": int(flagged_count), "skipped": skipped_reason})
@@ -293,15 +317,18 @@ async def check_and_notify(
         from calendar import month_name
         month_label = f"{month_name[prev_m]} {prev_y}"
         savings_pct = round(net / prev_income * 100, 1) if prev_income > 0 else 0
+        trend_emoji = "📈" if net >= 0 else "📉"
+        net_label = "✅" if savings_pct >= 20 else ("👍" if savings_pct >= 0 else "⚠️")
+        title = f"📊 {month_label} — Your Monthly Summary"
         msg = (
-            f"Income: ${prev_income:,.2f}\n"
-            f"Spend: ${prev_spend:,.2f}\n"
-            f"Net: ${net:+,.2f} ({savings_pct:+.1f}% saved)"
+            f"Here's how {month_name[prev_m]} went:\n"
+            f"💰 Income: ${prev_income:,.2f}\n"
+            f"💸 Spend:  ${prev_spend:,.2f}\n"
+            f"{trend_emoji} Net:    ${net:+,.2f}  {net_label} {savings_pct:+.1f}% saved"
         )
+        data = _deep_link_data(session, "dashboard")
         if token and targets:
-            sent = await _send_notification(ha_url, token, targets,
-                                            f"{month_label} Summary",
-                                            msg)
+            sent = await _send_notification(ha_url, token, targets, title, msg, data)
             notifications_sent.append({"type": "monthly_summary", "month": month_label, "sent": sent})
         else:
             notifications_sent.append({"type": "monthly_summary", "month": month_label, "skipped": skipped_reason})

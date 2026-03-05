@@ -1,6 +1,18 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v30",
+    "title": "PDF Fix + Creative Notifications + Deep-Links",
+    "items": [
+      "Payslip PDF: 'View PDF' now uses a short-lived server token URL instead of blob URL — Brave/Chrome can no longer block it",
+      "Notifications: all alerts now use emojis (🔴🟡💳🚨⚠️📊🚩💰) for quick visual scanning on the lock screen",
+      "Notifications: tapping any alert now deep-links directly to the relevant page in Finance Tracker (bills, budgets, flags, dashboard)",
+      "New setting: Finance App URL — paste your Nabu Casa or local URL to enable notification deep-links",
+      "Hash routing: URL hash is now also read on load so notification links navigate to the correct page (e.g. #bills → Bills page)"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v29",
     "title": "Wizard Layout Fix + PDF Viewer",
     "items": [
