@@ -1951,7 +1951,9 @@
                 <span class="amt" style="color:var(--accent);" x-text="'-$' + fmt((taxEstimate?.total_deductions||0)+(taxEstimate?.wfh_deduction||0))"></span>
               </div>
               <div style="padding:8px 0;font-size:11px;color:var(--muted);">
-                Based on <span x-text="taxEstimate?.payslip_count"></span> payslips · <span x-text="taxEstimate?.weeks_elapsed"></span> weeks elapsed · <span x-text="taxEstimate?.pay_frequency"></span>
+                Based on <span x-text="taxEstimate?.payslip_count"></span> payslips
+                <span x-show="taxEstimate?.multi_employer"> across <span x-text="taxEstimate?.employer_count"></span> employers</span>
+                · <span x-text="taxEstimate?.weeks_elapsed"></span> weeks elapsed · <span x-text="taxEstimate?.pay_frequency"></span>
               </div>
             </div>
             <p style="font-size:11px;color:var(--muted);margin-top:8px;">Projection only. Does not account for investment income, rental, or other tax events. Consult a registered tax agent.</p>

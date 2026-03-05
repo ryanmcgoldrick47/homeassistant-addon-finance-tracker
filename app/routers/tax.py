@@ -825,11 +825,16 @@ def tax_estimate(
     days_elapsed = max((reference_date - fy_start).days, 1)
     weeks_elapsed = days_elapsed / 7
 
-    # Prefer YTD gross if available on the latest payslip
-    if latest.ytd_gross_cents and latest.ytd_gross_cents > 0:
+    # Determine distinct employers in this FY's payslips
+    employers = {(p.employer or "").strip().lower() for p in payslips}
+    multi_employer = len(employers) > 1
+
+    if not multi_employer and latest.ytd_gross_cents and latest.ytd_gross_cents > 0:
+        # Single employer with YTD on payslip — most accurate
         ytd_gross = latest.ytd_gross_cents / 100
         ytd_tax_withheld = (latest.ytd_tax_cents or 0) / 100
     else:
+        # Multiple employers (or no YTD field): sum individual payslip amounts
         ytd_gross = sum(p.gross_pay_cents for p in payslips) / 100
         ytd_tax_withheld = sum(p.tax_withheld_cents for p in payslips) / 100
 
@@ -865,6 +870,8 @@ def tax_estimate(
         "fy": fy,
         "fy_label": f"{fy-1}–{fy}",
         "payslip_count": len(payslips),
+        "multi_employer": multi_employer,
+        "employer_count": len(employers),
         "latest_pay_date": str(latest.pay_date),
         "pay_frequency": latest.pay_frequency or "unknown",
         "weeks_elapsed": round(weeks_elapsed, 1),
