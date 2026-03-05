@@ -1064,6 +1064,64 @@ def dashboard_trend(months: int = 6, start: str = None, end: str = None, authori
     return result
 
 
+@app.get("/api/dashboard/data-currency")
+def dashboard_data_currency(authorization: str = __import__("fastapi").Header(default=None, alias="authorization")):
+    """Return last transaction date per account and last payslip date per employer."""
+    from datetime import date as _date
+    from database import Transaction, Account, Payslip
+
+    user_id = 1
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            with Session(engine) as _s:
+                from database import UserSession
+                tok = authorization[7:]
+                sess = _s.get(UserSession, tok)
+                if sess:
+                    user_id = sess.user_id
+        except Exception:
+            pass
+
+    today = _date.today()
+    result: dict = {"transactions": [], "payslips": []}
+
+    with Session(engine) as session:
+        # Last transaction date per account
+        accounts = session.exec(select(Account).where(Account.user_id == user_id)).all()
+        for acct in accounts:
+            last_date = session.exec(
+                select(Transaction.date).where(
+                    Transaction.user_id == user_id,
+                    Transaction.account_id == acct.id,
+                ).order_by(Transaction.date.desc()).limit(1)
+            ).first()
+            if last_date:
+                days_ago = (today - last_date).days
+                result["transactions"].append({"account": acct.name, "date": str(last_date), "days_ago": days_ago})
+
+        # Last payslip date per employer
+        employers = session.exec(
+            select(Payslip.employer).where(
+                Payslip.user_id == user_id,
+                Payslip.employer != None,
+            ).distinct()
+        ).all()
+        for employer in employers:
+            last_date = session.exec(
+                select(Payslip.pay_date).where(
+                    Payslip.user_id == user_id,
+                    Payslip.employer == employer,
+                ).order_by(Payslip.pay_date.desc()).limit(1)
+            ).first()
+            if last_date:
+                days_ago = (today - last_date).days
+                result["payslips"].append({"employer": employer, "date": str(last_date), "days_ago": days_ago})
+
+    result["transactions"].sort(key=lambda x: x["days_ago"])
+    result["payslips"].sort(key=lambda x: x["days_ago"])
+    return result
+
+
 # Serve SPA for all non-API routes
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 

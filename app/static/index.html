@@ -500,6 +500,42 @@
           </template>
         </div>
 
+        <!-- Data Currency -->
+        <div class="card" style="margin-bottom:16px;" x-show="dashDataCurrency">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;">
+            <span style="font-size:15px;">🕐</span>
+            <span style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Data Currency</span>
+          </div>
+          <div style="display:flex;gap:16px;flex-wrap:wrap;">
+            <!-- Accounts -->
+            <div style="flex:1;min-width:140px;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Accounts</div>
+              <template x-for="a in (dashDataCurrency?.transactions || [])" :key="a.account">
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"
+                    :style="a.days_ago <= 7 ? 'background:#22c55e' : a.days_ago <= 14 ? 'background:#f59e0b' : 'background:#ef4444'"></span>
+                  <span style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="a.account"></span>
+                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;" x-text="a.days_ago === 0 ? 'today' : a.days_ago + 'd ago'"></span>
+                </div>
+              </template>
+              <div x-show="!dashDataCurrency?.transactions?.length" style="font-size:12px;color:var(--muted);">No accounts</div>
+            </div>
+            <!-- Payslips -->
+            <div style="flex:1;min-width:140px;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Payslips</div>
+              <template x-for="p in (dashDataCurrency?.payslips || [])" :key="p.employer">
+                <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"
+                    :style="p.days_ago <= 14 ? 'background:#22c55e' : p.days_ago <= 30 ? 'background:#f59e0b' : 'background:#ef4444'"></span>
+                  <span style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="p.employer"></span>
+                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;" x-text="p.days_ago === 0 ? 'today' : p.days_ago + 'd ago'"></span>
+                </div>
+              </template>
+              <div x-show="!dashDataCurrency?.payslips?.length" style="font-size:12px;color:var(--muted);">No payslips</div>
+            </div>
+          </div>
+        </div>
+
         <!-- Quick actions -->
         <div class="grid grid-3 gap-3" style="margin-bottom:16px;">
           <button @click="page='flags'" class="card-sm" style="cursor:pointer;text-align:left;border:none;display:flex;align-items:center;gap:12px;">
@@ -6873,6 +6909,7 @@ function app() {
     dashNetWorth: null,
     dashInvestments: null,
     dashCryptoTotal: 0,
+    dashDataCurrency: null,
     trendRaw: [],
     trendMonths: 6,
     trendCustom: false,
@@ -8341,16 +8378,18 @@ function app() {
       // Supplemental widgets — failures are silenced
       try { this.dashNetWorth = await this.api('/api/networth/latest'); }
       catch { this.dashNetWorth = null; }
-      const [inv, crypto, nwChart, superSumm, superChart] = await Promise.all([
+      const [inv, crypto, nwChart, superSumm, superChart, dataCurrency] = await Promise.all([
         this.api('/api/investments/summary').catch(() => null),
         this.api('/api/crypto').catch(() => null),
         this.api('/api/networth/chart').catch(() => null),
         this.api('/api/super/summary').catch(() => null),
         this.api('/api/super/chart').catch(() => []),
+        this.api('/api/dashboard/data-currency').catch(() => null),
       ]);
       this.dashInvestments = inv;
       this.dashCryptoTotal = crypto?.total_aud || 0;
       this.dashSuperBalance = superSumm?.latest_balance || 0;
+      this.dashDataCurrency = dataCurrency;
       if (superChart && superChart.length) this.superChartData = superChart;
 
       // Score, achievements, goals, streaks for dashboard widgets
