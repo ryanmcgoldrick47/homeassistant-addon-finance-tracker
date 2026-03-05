@@ -3134,7 +3134,7 @@
                   </div>
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-                  <button x-show="p.has_pdf" @click="viewPayslipPdf(p.id)" class="btn btn-ghost btn-sm">📄 View PDF</button>
+                  <button x-show="p.has_pdf" @click="viewPayslipPdf(p.id, p.employer + ' ' + p.pay_date)" class="btn btn-ghost btn-sm">📄 View PDF</button>
                   <button x-show="p.flag_count > 0 && !p.is_reviewed" @click="markPayslipReviewed(p.id)" class="btn btn-ghost btn-sm">Mark reviewed</button>
                   <button @click="deletePayslip(p.id)" class="btn btn-danger btn-sm">Delete</button>
                 </div>
@@ -6292,27 +6292,26 @@
 </div>
 
 <!-- ═══════════ SETUP WIZARD ═══════════ -->
-<div x-show="page === 'setup'" x-cloak style="min-height:calc(100dvh - 60px);display:flex;flex-direction:column;">
+<div x-show="page === 'setup'" x-cloak>
+  <div style="max-width:540px;margin:0 auto;">
 
   <!-- Progress bar -->
-  <div style="height:3px;background:var(--border);flex-shrink:0;">
-    <div :style="`width:${wizardProgress}%;background:linear-gradient(90deg,var(--accent),#818cf8);height:3px;transition:width .4s ease;`"></div>
+  <div style="height:3px;background:var(--border);border-radius:2px;margin-bottom:20px;overflow:hidden;">
+    <div :style="`width:${wizardProgress}%;background:linear-gradient(90deg,var(--accent),#818cf8);height:100%;transition:width .4s ease;`"></div>
   </div>
 
-  <!-- Step counter -->
-  <div style="text-align:center;padding:12px 0 4px;flex-shrink:0;">
-    <span x-show="wizardStep > 0 && wizardStep < wizardSteps.length - 1" style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;" x-text="`Step ${wizardStep} of ${wizardSteps.length - 2}`"></span>
-    <!-- dot progress -->
-    <div x-show="wizardStep > 0 && wizardStep < wizardSteps.length - 1" style="display:flex;gap:5px;justify-content:center;margin-top:8px;">
+  <!-- Step counter + dots (steps 1–8 only) -->
+  <div x-show="wizardStep > 0 && wizardStep < wizardSteps.length - 1" style="text-align:center;margin-bottom:24px;">
+    <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px;" x-text="`Step ${wizardStep} of ${wizardSteps.length - 2}`"></div>
+    <div style="display:flex;gap:5px;justify-content:center;">
       <template x-for="(s,i) in wizardSteps.slice(1,-1)" :key="i">
-        <div :style="`width:${(i+1)===wizardStep?20:6}px;height:6px;border-radius:3px;transition:.3s;background:${(i+1)<=wizardStep?'var(--accent)':'var(--border)'};`"></div>
+        <div :style="`height:6px;border-radius:3px;transition:all .3s;background:${(i+1)<=wizardStep?'var(--accent)':'var(--border)'};width:${(i+1)===wizardStep?20:6}px;`"></div>
       </template>
     </div>
   </div>
 
-  <!-- Step content -->
-  <div style="flex:1;display:flex;align-items:flex-start;justify-content:center;padding:20px 20px 120px;overflow-y:auto;">
-    <div style="width:100%;max-width:520px;">
+  <!-- Step content (all steps share this single-column centred layout) -->
+  <div>
 
       <!-- ── Step 0: Welcome ── -->
       <div x-show="wizardStep === 0" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
@@ -6589,19 +6588,43 @@
         </div>
       </div>
 
-    </div>
   </div>
 
-  <!-- Sticky navigation bar -->
-  <div style="position:sticky;bottom:0;background:var(--bg);border-top:1px solid var(--border);padding:14px 20px;display:flex;align-items:center;gap:10px;z-index:10;flex-shrink:0;">
-    <button x-show="wizardStep > 0 && wizardStep < 9" @click="wizardBack()" class="btn btn-ghost" style="padding:10px 16px;">← Back</button>
+  <!-- Navigation buttons (inline, bottom of content) -->
+  <div style="display:flex;align-items:center;gap:10px;margin-top:36px;padding-bottom:24px;border-top:1px solid var(--border);padding-top:20px;">
+    <button x-show="wizardStep > 0 && wizardStep < 9" @click="wizardBack()" class="btn btn-ghost">← Back</button>
     <div style="flex:1;"></div>
-    <button x-show="wizardIsOptional && wizardStep < 9" @click="wizardSkip()" class="btn btn-ghost" style="padding:10px 16px;color:var(--muted);">Skip</button>
-    <button @click="wizardNext()" :disabled="wizardBusy" class="btn btn-primary" style="padding:10px 24px;min-width:150px;">
+    <button x-show="wizardIsOptional && wizardStep < 9" @click="wizardSkip()" class="btn btn-ghost" style="color:var(--muted);">Skip</button>
+    <button @click="wizardNext()" :disabled="wizardBusy" class="btn btn-primary" style="padding:10px 28px;min-width:160px;">
       <span x-show="!wizardBusy" x-text="wizardContinueLabel"></span>
       <span x-show="wizardBusy">Saving…</span>
     </button>
   </div>
+
+  </div><!-- /max-width container -->
+</div>
+
+<!-- ═══ PDF VIEWER MODAL ═══ -->
+<div x-show="pdfModal.open" x-cloak
+     style="position:fixed;top:0;left:0;right:0;bottom:0;z-index:8000;background:rgba(0,0,0,.92);display:flex;flex-direction:column;"
+     @keydown.escape.window="closePdfModal()">
+  <!-- Header -->
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:12px 16px;background:var(--surf);border-bottom:1px solid var(--border);flex-shrink:0;">
+    <div style="display:flex;align-items:center;gap:10px;">
+      <span style="font-size:18px;">📄</span>
+      <span style="font-weight:600;font-size:14px;" x-text="pdfModal.name"></span>
+    </div>
+    <button @click="closePdfModal()" class="btn btn-ghost btn-sm" style="font-size:18px;line-height:1;">✕</button>
+  </div>
+  <!-- Loading state -->
+  <div x-show="pdfModal.loading" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--muted);">
+    Loading PDF…
+  </div>
+  <!-- PDF embed — renders inline, no new tab, bypasses all popup blockers -->
+  <embed x-show="pdfModal.url && !pdfModal.loading"
+         :src="pdfModal.url"
+         type="application/pdf"
+         style="flex:1;width:100%;border:none;">
 </div>
 
 <!-- ═══ CHAT WIDGET ═══ -->
@@ -6920,6 +6943,9 @@ function app() {
     taxFY: new Date().getMonth() >= 6 ? new Date().getFullYear() + 1 : new Date().getFullYear(),
     fySummary: null,
     wfhDays: 0,
+
+    // PDF inline viewer
+    pdfModal: { open: false, url: null, loading: false, name: '' },
 
     // Setup wizard
     wizardStep: 0,
@@ -8064,15 +8090,11 @@ function app() {
       }
     },
 
-    async viewPayslipPdf(payslipId) {
-      // window.open MUST be called synchronously (before any await) to stay within
-      // the user gesture — Brave/Chrome block popups opened after async work.
-      const win = window.open('', '_blank');
-      if (!win) {
-        this.showToast('Popup blocked — allow popups for this site in browser settings', 5000);
-        return;
-      }
-      win.document.write('<html><body style="margin:0;background:#050c1a;color:#dde8f5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;font-size:16px;">Loading PDF\u2026</body></html>');
+    async viewPayslipPdf(payslipId, name) {
+      // Render PDF inline in a modal — avoids ALL popup/blob-URL blocking
+      // (Brave ERR_BLOCKED_BY_CLIENT on blob:https://nabu.casa/...).
+      if (this.pdfModal.url) { URL.revokeObjectURL(this.pdfModal.url); }
+      this.pdfModal = { open: true, url: null, loading: true, name: name || `Payslip #${payslipId}` };
       const BASE = window.FINANCE_BASE || '';
       try {
         const res = await fetch(BASE + `/api/payslips/${payslipId}/pdf`, {
@@ -8080,16 +8102,22 @@ function app() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
-          win.close();
+          this.pdfModal.open = false;
           this.showToast('Error: ' + (err.detail || 'Could not load PDF'), 5000);
           return;
         }
         const blob = await res.blob();
-        win.location.href = URL.createObjectURL(blob);
+        this.pdfModal.url = URL.createObjectURL(blob);
       } catch(e) {
-        win.close();
+        this.pdfModal.open = false;
         this.showToast('Error loading PDF: ' + e.message, 5000);
+      } finally {
+        this.pdfModal.loading = false;
       }
+    },
+    closePdfModal() {
+      if (this.pdfModal.url) URL.revokeObjectURL(this.pdfModal.url);
+      this.pdfModal = { open: false, url: null, loading: false, name: '' };
     },
 
     async wizardNext() {
