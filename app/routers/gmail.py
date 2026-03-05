@@ -298,8 +298,9 @@ def _fetch_receipt_emails(email_addr: str, app_password: str, days: int = 90) ->
 def _save_receipt_binary(
     data: bytes, filename: str, ext: str, label_type: str, txn_date: str, description: str
 ) -> str:
-    """Save a binary receipt file (PDF or image) and return the saved path."""
-    receipt_dir = os.path.join(_DATA_DIR, "receipts", "gmail")
+    """Save a binary receipt file (PDF or image) and return path relative to RECEIPTS_DIR."""
+    receipts_base = os.path.join(_DATA_DIR, "receipts")
+    receipt_dir = os.path.join(receipts_base, "gmail")
     os.makedirs(receipt_dir, exist_ok=True)
     safe_desc = re.sub(r"[^\w\-]", "_", description)[:40]
     safe_date = re.sub(r"[^\w\-]", "_", txn_date)[:10]
@@ -308,7 +309,8 @@ def _save_receipt_binary(
     dest = os.path.join(receipt_dir, dest_filename)
     with open(dest, "wb") as f:
         f.write(data)
-    return dest
+    # Return relative path so /api/receipts/{path} can serve it
+    return os.path.relpath(dest, receipts_base)
 
 
 # ── Payslip import from PDF bytes ────────────────────────────────────────────
@@ -1016,7 +1018,8 @@ def scan_gmail(
         src_email = email_body_map.get(msg_id)
         if src_email and body.commit:
             safe_name = re.sub(r"[^\w\-]", "_", f"{txn_date}_{item.get('description','receipt')}")[:60]
-            receipt_file = os.path.join(receipt_dir, f"{safe_name}_{raw_hash[:8]}.html")
+            receipt_filename = f"{safe_name}_{raw_hash[:8]}.html"
+            receipt_file = os.path.join(receipt_dir, receipt_filename)
             try:
                 html_content = (
                     f"<html><head><meta charset='utf-8'><title>{src_email['subject']}</title></head>"
@@ -1027,7 +1030,9 @@ def scan_gmail(
                 )
                 with open(receipt_file, "w", encoding="utf-8") as f:
                     f.write(html_content)
-                receipt_path = receipt_file
+                # Store relative path so /api/receipts/{path} can serve it
+                receipts_base = os.path.join(_DATA_DIR_GMAIL, "receipts")
+                receipt_path = os.path.relpath(receipt_file, receipts_base)
             except Exception:
                 pass
 

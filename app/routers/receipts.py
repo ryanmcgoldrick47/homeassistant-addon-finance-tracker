@@ -70,16 +70,17 @@ async def upload_receipt(
     return {"ok": True, "filename": filename}
 
 
-@router.get("/api/receipts/{filename}")
-def serve_receipt(filename: str):
-    # Prevent path traversal
-    if "/" in filename or "\\" in filename or ".." in filename:
-        raise HTTPException(400, "Invalid filename")
-    path = os.path.join(RECEIPTS_DIR, filename)
-    if not os.path.exists(path):
+@router.get("/api/receipts/{filepath:path}")
+def serve_receipt(filepath: str):
+    # Prevent path traversal — resolve and ensure it stays within RECEIPTS_DIR
+    full = os.path.realpath(os.path.join(RECEIPTS_DIR, filepath))
+    receipts_root = os.path.realpath(RECEIPTS_DIR)
+    if not full.startswith(receipts_root + os.sep) and full != receipts_root:
+        raise HTTPException(400, "Invalid path")
+    if not os.path.exists(full):
         raise HTTPException(404, "Receipt not found")
-    return FileResponse(path, headers={
-        "Content-Disposition": f'inline; filename="{filename}"',
+    return FileResponse(full, headers={
+        "Content-Disposition": f'inline; filename="{os.path.basename(full)}"',
     })
 
 
