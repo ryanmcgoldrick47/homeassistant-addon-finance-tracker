@@ -325,10 +325,11 @@ async def upload_payslip(
     if existing:
         raise HTTPException(409, f"A payslip for {pay_date} from {employer} already exists (ID {existing.id}).")
 
-    # Get previous payslip for comparison
+    # Get previous payslip for same employer for comparison
     prev = session.exec(
         select(Payslip).where(
             Payslip.user_id == current_user.id,
+            Payslip.employer == employer,
             Payslip.pay_date < pay_date,
         ).order_by(Payslip.pay_date.desc()).limit(1)
     ).first()
@@ -445,6 +446,7 @@ async def bulk_upload_payslips(
             prev = session.exec(
                 select(Payslip).where(
                     Payslip.user_id == current_user.id,
+                    Payslip.employer == employer,
                     Payslip.pay_date < pay_date,
                 ).order_by(Payslip.pay_date.desc()).limit(1)
             ).first()
@@ -866,6 +868,7 @@ async def payslip_watch_tick():
                     prev = session.exec(
                         select(Payslip).where(
                             Payslip.user_id == 1,
+                            Payslip.employer == employer,
                             Payslip.pay_date < pay_date,
                         ).order_by(Payslip.pay_date.desc()).limit(1)
                     ).first()
