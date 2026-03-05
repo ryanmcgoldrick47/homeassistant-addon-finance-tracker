@@ -11,12 +11,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlmodel import Session, select
 
-from database import Transaction, Account, Category, get_session, engine
+from database import Transaction, Account, Category, get_session, engine, User
+from deps import get_current_user
 
 router = APIRouter(prefix="/api/import", tags=["import"])
 
-WATCH_DIR      = "/config/finance_tracker/import_watch"
-PROCESSED_DIR  = "/config/finance_tracker/import_watch/processed"
+import os as _os
+_DATA_DIR     = _os.environ.get("FINANCE_DATA_DIR", "/data")
+WATCH_DIR     = _os.path.join(_DATA_DIR, "import_watch")
+PROCESSED_DIR = _os.path.join(_DATA_DIR, "import_watch", "processed")
 
 # In-memory log of recent folder-watch import results (last 20)
 _watch_log: list[dict] = []
@@ -56,7 +59,8 @@ async def folder_watch_tick():
             with open(src, "r", encoding="utf-8-sig") as f:
                 text = f.read()
             with Session(engine) as session:
-                result = import_csv_text(text, account_id, session)
+                # folder_watch runs as user_id=1 (default/primary user)
+                result = import_csv_text(text, account_id, session, user_id=1)
             # Move to processed/
             dst = os.path.join(PROCESSED_DIR, filename)
             # Avoid name collision in processed dir
@@ -78,24 +82,34 @@ async def folder_watch_tick():
         _watch_log.insert(0, entry)
         if len(_watch_log) > 20:
             _watch_log.pop()
-        # HA notification
+        # HA notification (uses ha_notify_targets from settings)
         try:
             import requests
+            from sqlalchemy import text as _text
+            from database import engine as _engine
             token = os.environ.get("SUPERVISOR_TOKEN", "")
             if token and entry["status"] == "ok":
+                with _engine.connect() as _conn:
+                    row = _conn.execute(_text("SELECT value FROM setting WHERE key='ha_notify_targets'")).fetchone()
+                targets_str = row[0] if row else ""
+                targets = [t.strip() for t in targets_str.split(",") if t.strip()]
                 msg = f"{filename}: {entry['imported']} imported, {entry['skipped']} skipped"
-                requests.post(
-                    "http://supervisor/core/api/services/notify/mobile_app_ryans_iphone",
-                    headers={"Authorization": f"Bearer {token}"},
-                    json={"title": "Finance Tracker — CSV imported", "message": msg},
-                    timeout=5,
-                )
+                for target in targets:
+                    try:
+                        requests.post(
+                            f"http://supervisor/core/api/services/notify/{target}",
+                            headers={"Authorization": f"Bearer {token}"},
+                            json={"title": "Finance Tracker — CSV imported", "message": msg},
+                            timeout=5,
+                        )
+                    except Exception:
+                        pass
         except Exception:
             pass
 
 
 @router.get("/watch-status")
-def watch_status():
+def watch_status(current_user: User = Depends(get_current_user)):
     _ensure_watch_dirs()
     try:
         pending = [f for f in os.listdir(WATCH_DIR)
@@ -163,27 +177,90 @@ def _find_uncategorised_id(session: Session) -> Optional[int]:
 
 
 @router.get("/accounts")
-def list_accounts(session: Session = Depends(get_session)):
-    accounts = session.exec(select(Account)).all()
+def list_accounts(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    accounts = session.exec(select(Account).where(Account.user_id == current_user.id)).all()
     return accounts
 
 
 @router.post("/accounts")
-def create_account(name: str, bank: str = "Macquarie", account_number: str = "", session: Session = Depends(get_session)):
-    acc = Account(name=name, bank=bank, account_number=account_number)
+def create_account(
+    name: str,
+    bank: str = "Macquarie",
+    account_number: str = "",
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    acc = Account(name=name, bank=bank, account_number=account_number, user_id=current_user.id)
     session.add(acc)
     session.commit()
     session.refresh(acc)
     return acc
 
 
-def import_csv_text(text: str, account_id: int, session: Session) -> dict:
+import re as _re
+
+# 3-letter ISO country codes that appear at end of Macquarie descriptions (e.g. "Techcombank Vnm")
+_COUNTRY_CODES = {
+    "VNM": "VND", "USA": "USD", "GBR": "GBP", "JPN": "JPY", "THA": "THB",
+    "SGP": "SGD", "HKG": "HKD", "IDN": "IDR", "MYS": "MYR", "PHL": "PHP",
+    "KOR": "KRW", "CHN": "CNY", "IND": "INR", "NZL": "NZD", "CAN": "CAD",
+    "EUR": "EUR", "FRA": "EUR", "DEU": "EUR", "ITA": "EUR", "ESP": "EUR",
+    "AUT": "EUR", "NLD": "EUR", "BEL": "EUR", "PRT": "EUR", "GRC": "EUR",
+    "UAE": "AED", "ARE": "AED", "MEX": "MXN", "BRA": "BRL", "ARG": "ARS",
+}
+# Currency codes that may appear inline in descriptions
+_CURRENCY_CODES = {"USD","EUR","GBP","JPY","THB","VND","SGD","HKD","IDR","MYR",
+                   "PHP","KRW","CNY","INR","NZD","CAD","AED","MXN","BRL","CHF","SEK","NOK","DKK"}
+_OVERSEAS_KEYWORDS = ["INTL ", "FOREIGN TRANSACTION", "VISA INTL", "OVERSEAS", "INTL FEE"]
+
+
+def _detect_overseas(description: str) -> tuple[bool, str | None]:
+    """Return (is_overseas, currency_code) for a transaction description."""
+    desc_upper = description.upper()
+    # Check trailing 3-letter country code (common in Macquarie CSV)
+    m = _re.search(r"\b([A-Z]{3})\s*$", desc_upper)
+    if m and m.group(1) in _COUNTRY_CODES:
+        return True, _COUNTRY_CODES[m.group(1)]
+    # Check inline currency code
+    for code in _CURRENCY_CODES:
+        if _re.search(r"\b" + code + r"\b", desc_upper):
+            return True, code
+    # Keywords
+    for kw in _OVERSEAS_KEYWORDS:
+        if kw in desc_upper:
+            return True, None
+    return False, None
+
+
+def _strip_preamble(text: str) -> str:
+    """Skip leading rows that don't look like a CSV header.
+    Banks like St George include account info rows before the actual column headers.
+    We look for the first row that contains a recognised date column alias AND
+    at least one amount/description alias (to avoid false matches on preamble text)."""
+    date_aliases = _COL_ALIASES["date"]
+    other_aliases = [a for k, v in _COL_ALIASES.items() if k != "date" for a in v]
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        low = line.lower()
+        # Must match a date alias as a whole CSV field (surrounded by commas/start/end)
+        has_date = any(_re.search(r'(?:^|,)\s*' + _re.escape(alias) + r'\s*(?:,|$)', low) for alias in date_aliases)
+        has_other = any(alias in low for alias in other_aliases)
+        if has_date and has_other:
+            return "\n".join(lines[i:])
+    return text
+
+
+def import_csv_text(text: str, account_id: int, session: Session, user_id: int = 1) -> dict:
     """Core CSV import logic — takes raw text, returns {imported, skipped, errors}.
     Used by both the HTTP endpoint and the folder watcher background task."""
     account = session.get(Account, account_id)
     if not account:
         return {"imported": 0, "skipped": 0, "errors": [{"row": 0, "error": f"Account {account_id} not found"}]}
 
+    text = _strip_preamble(text)
     uncategorised_id = _find_uncategorised_id(session)
     reader = csv.DictReader(io.StringIO(text))
     imported = skipped = 0
@@ -221,10 +298,12 @@ def import_csv_text(text: str, account_id: int, session: Session) -> dict:
             if session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first():
                 skipped += 1
                 continue
+            is_overseas, currency_code = _detect_overseas(description)
             session.add(Transaction(
                 account_id=account_id, date=date_val, description=description,
                 amount=amount, is_credit=is_credit, category_id=uncategorised_id,
-                raw_hash=raw_hash,
+                raw_hash=raw_hash, user_id=user_id,
+                is_overseas=is_overseas, currency_code=currency_code,
             ))
             imported += 1
         except Exception as e:
@@ -239,7 +318,8 @@ async def import_csv(
     file: UploadFile = File(...),
     account_id: int = Form(...),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     content = await file.read()
     text = content.decode("utf-8-sig")
-    return import_csv_text(text, account_id, session)
+    return import_csv_text(text, account_id, session, user_id=current_user.id)

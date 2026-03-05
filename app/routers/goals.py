@@ -8,7 +8,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 import httpx
 
-from database import get_session, Goal, GoalContribution, Category, Transaction
+from database import get_session, Goal, GoalContribution, Category, Transaction, User
+from deps import get_current_user
 
 router = APIRouter()
 
@@ -19,6 +20,7 @@ router = APIRouter()
 
 class GoalIn(BaseModel):
     name: str
+    goal_type: str = "long_term"  # "short_term" | "long_term"
     target_cents: int
     target_date: Optional[str] = None
     category_id: Optional[int] = None
@@ -77,6 +79,7 @@ def _goal_dict(goal: Goal, session: Session) -> dict:
     return {
         "id": goal.id,
         "name": goal.name,
+        "goal_type": goal.goal_type or "long_term",
         "target_cents": goal.target_cents,
         "current_cents": goal.current_cents,
         "target_aud": round(goal.target_cents / 100, 2),
@@ -107,20 +110,31 @@ def _goal_dict(goal: Goal, session: Session) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/goals")
-def list_goals(session: Session = Depends(get_session)):
-    goals = session.exec(select(Goal).order_by(Goal.is_complete, Goal.target_date)).all()
+def list_goals(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    goals = session.exec(
+        select(Goal).where(Goal.user_id == current_user.id).order_by(Goal.is_complete, Goal.target_date)
+    ).all()
     return [_goal_dict(g, session) for g in goals]
 
 
 @router.post("/api/goals")
-def create_goal(body: GoalIn, session: Session = Depends(get_session)):
+def create_goal(
+    body: GoalIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     goal = Goal(
         name=body.name,
+        goal_type=body.goal_type or "long_term",
         target_cents=body.target_cents,
         target_date=date.fromisoformat(body.target_date) if body.target_date else None,
         category_id=body.category_id,
         notes=body.notes,
         created_at=datetime.now().isoformat(timespec="seconds"),
+        user_id=current_user.id,
     )
     session.add(goal)
     session.commit()
@@ -129,10 +143,16 @@ def create_goal(body: GoalIn, session: Session = Depends(get_session)):
 
 
 @router.delete("/api/goals/{goal_id}")
-def delete_goal(goal_id: int, session: Session = Depends(get_session)):
+def delete_goal(
+    goal_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     goal = session.get(Goal, goal_id)
     if not goal:
         raise HTTPException(404, "Goal not found")
+    if goal.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     # cascade delete contributions
     for c in session.exec(select(GoalContribution).where(GoalContribution.goal_id == goal_id)).all():
         session.delete(c)
@@ -142,10 +162,16 @@ def delete_goal(goal_id: int, session: Session = Depends(get_session)):
 
 
 @router.patch("/api/goals/{goal_id}/complete")
-async def mark_complete(goal_id: int, session: Session = Depends(get_session)):
+async def mark_complete(
+    goal_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     goal = session.get(Goal, goal_id)
     if not goal:
         raise HTTPException(404, "Goal not found")
+    if goal.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     goal.is_complete = True
     session.add(goal)
     session.commit()
@@ -158,10 +184,17 @@ async def mark_complete(goal_id: int, session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @router.post("/api/goals/{goal_id}/contribute")
-async def add_contribution(goal_id: int, body: ContributionIn, session: Session = Depends(get_session)):
+async def add_contribution(
+    goal_id: int,
+    body: ContributionIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     goal = session.get(Goal, goal_id)
     if not goal:
         raise HTTPException(404, "Goal not found")
+    if goal.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
 
     contrib = GoalContribution(
         goal_id=goal_id,
@@ -185,16 +218,22 @@ async def add_contribution(goal_id: int, body: ContributionIn, session: Session 
 
 
 @router.delete("/api/goals/{goal_id}/contributions/{contrib_id}")
-def delete_contribution(goal_id: int, contrib_id: int, session: Session = Depends(get_session)):
+def delete_contribution(
+    goal_id: int,
+    contrib_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     contrib = session.get(GoalContribution, contrib_id)
     if not contrib or contrib.goal_id != goal_id:
         raise HTTPException(404, "Contribution not found")
     goal = session.get(Goal, goal_id)
-    if goal:
-        goal.current_cents = max(0, goal.current_cents - contrib.amount_cents)
-        if goal.current_cents < goal.target_cents:
-            goal.is_complete = False
-        session.add(goal)
+    if not goal or goal.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
+    goal.current_cents = max(0, goal.current_cents - contrib.amount_cents)
+    if goal.current_cents < goal.target_cents:
+        goal.is_complete = False
+    session.add(goal)
     session.delete(contrib)
     session.commit()
     return {"ok": True}
@@ -205,7 +244,10 @@ def delete_contribution(goal_id: int, contrib_id: int, session: Session = Depend
 # ---------------------------------------------------------------------------
 
 @router.get("/api/goals/savings-rate")
-def get_savings_rate_history(session: Session = Depends(get_session)):
+def get_savings_rate_history(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from deps import get_setting
     target_pct = float(get_setting(session, "savings_rate_target") or "20")
 
@@ -221,6 +263,7 @@ def get_savings_rate_history(session: Session = Depends(get_session)):
         def _sum(is_credit: bool) -> float:
             return float(session.exec(
                 select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.user_id == current_user.id,
                     Transaction.is_credit == is_credit,
                     func.strftime("%m", Transaction.date) == f"{m:02d}",
                     func.strftime("%Y", Transaction.date) == str(y),
@@ -260,7 +303,11 @@ def get_savings_rate_history(session: Session = Depends(get_session)):
 
 
 @router.patch("/api/goals/savings-rate")
-def set_savings_rate_target(body: SavingsRateTargetIn, session: Session = Depends(get_session)):
+def set_savings_rate_target(
+    body: SavingsRateTargetIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from deps import set_setting
     set_setting(session, "savings_rate_target", str(body.target_pct))
     return {"ok": True, "target_pct": body.target_pct}

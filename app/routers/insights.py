@@ -8,8 +8,8 @@ from calendar import month_name, month_abbr
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select, func
 
-from database import Transaction, Category, Budget, Bill, Setting, get_session
-from deps import get_setting
+from database import Transaction, Category, Budget, Bill, Setting, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/insights", tags=["insights"])
 
@@ -18,11 +18,12 @@ router = APIRouter(prefix="/api/insights", tags=["insights"])
 # Data gathering
 # ---------------------------------------------------------------------------
 
-def _month_totals(session: Session, m: int, y: int):
+def _month_totals(session: Session, m: int, y: int, user_id: int):
     """Return (spend, income) for a given month/year."""
     def _sum(is_credit):
         return float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == is_credit,
                 func.strftime("%m", Transaction.date) == f"{m:02d}",
                 func.strftime("%Y", Transaction.date) == str(y),
@@ -31,9 +32,10 @@ def _month_totals(session: Session, m: int, y: int):
     return _sum(False), _sum(True)
 
 
-def _spend_by_category(session: Session, m: int, y: int) -> dict[str, float]:
+def _spend_by_category(session: Session, m: int, y: int, user_id: int) -> dict[str, float]:
     txns = session.exec(
         select(Transaction).where(
+            Transaction.user_id == user_id,
             Transaction.is_credit == False,
             func.strftime("%m", Transaction.date) == f"{m:02d}",
             func.strftime("%Y", Transaction.date) == str(y),
@@ -47,7 +49,7 @@ def _spend_by_category(session: Session, m: int, y: int) -> dict[str, float]:
     return result
 
 
-def _build_context(session: Session) -> str:
+def _build_context(session: Session, user_id: int) -> str:
     today = date.today()
 
     # Collect last 3 full months + current month
@@ -62,7 +64,7 @@ def _build_context(session: Session) -> str:
 
     monthly_rows = []
     for m, y in months:
-        spend, income = _month_totals(session, m, y)
+        spend, income = _month_totals(session, m, y, user_id)
         net = income - spend
         savings_rate = round(net / income * 100, 1) if income > 0 else 0
         label = f"{month_abbr[m]} {y}"
@@ -73,13 +75,13 @@ def _build_context(session: Session) -> str:
 
     # Current month detail
     cm, cy = today.month, today.year
-    cur_spend, cur_income = _month_totals(session, cm, cy)
-    cur_by_cat = _spend_by_category(session, cm, cy)
+    cur_spend, cur_income = _month_totals(session, cm, cy, user_id)
+    cur_by_cat = _spend_by_category(session, cm, cy, user_id)
 
     # Previous month for comparison
     pm = cm - 1 or 12
     py = cy if cm > 1 else cy - 1
-    prev_by_cat = _spend_by_category(session, pm, py)
+    prev_by_cat = _spend_by_category(session, pm, py, user_id)
 
     # Category breakdown with MoM delta
     cat_lines = []
@@ -96,8 +98,10 @@ def _build_context(session: Session) -> str:
             delta = f" (prev ${prev_v:,.2f}, {'+' if pct >= 0 else ''}{pct}% MoM)"
         cat_lines.append(f"  {cat}: ${cur_v:,.2f}{delta}")
 
-    # Budgets
-    budgets = session.exec(select(Budget)).all()
+    # Budgets (user-specific)
+    budgets = session.exec(
+        select(Budget).where(Budget.user_id == user_id)
+    ).all()
     budget_lines = []
     for b in budgets:
         cat = session.get(Category, b.category_id) if b.category_id else None
@@ -110,8 +114,10 @@ def _build_context(session: Session) -> str:
             f"  {cat_name}: ${actual:,.2f} / ${budget_amt:,.2f} ({pct}% — {status})"
         )
 
-    # Bills
-    bills = session.exec(select(Bill).where(Bill.is_active == True)).all()
+    # Bills (user-specific)
+    bills = session.exec(
+        select(Bill).where(Bill.user_id == user_id, Bill.is_active == True)
+    ).all()
     monthly_bill_total = 0
     bill_lines = []
     for b in bills:
@@ -126,6 +132,7 @@ def _build_context(session: Session) -> str:
     # Top transactions this month
     top_txns = session.exec(
         select(Transaction).where(
+            Transaction.user_id == user_id,
             Transaction.is_credit == False,
             func.strftime("%m", Transaction.date) == f"{cm:02d}",
             func.strftime("%Y", Transaction.date) == str(cy),
@@ -143,7 +150,10 @@ def _build_context(session: Session) -> str:
     uncat_count = 0
     if uncat:
         uncat_count = session.exec(
-            select(func.count()).where(Transaction.category_id == uncat.id)
+            select(func.count()).where(
+                Transaction.user_id == user_id,
+                Transaction.category_id == uncat.id,
+            )
         ).one()
 
     return f"""== FINANCIAL SNAPSHOT ==
@@ -251,10 +261,16 @@ def _parse_json(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 @router.get("")
-def get_insights(session: Session = Depends(get_session)):
+def get_insights(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Return cached insights if available."""
-    cached = get_setting(session, "insights_cache")
-    generated_at = get_setting(session, "insights_generated_at")
+    # Use a user-scoped cache key
+    cache_key = f"insights_cache_{current_user.id}"
+    at_key = f"insights_generated_at_{current_user.id}"
+    cached = get_setting(session, cache_key)
+    generated_at = get_setting(session, at_key)
     if cached:
         try:
             return {"data": json.loads(cached), "generated_at": generated_at, "cached": True}
@@ -264,9 +280,12 @@ def get_insights(session: Session = Depends(get_session)):
 
 
 @router.post("/generate")
-async def generate_insights(session: Session = Depends(get_session)):
+async def generate_insights(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Generate fresh AI insights and cache them."""
-    context = _build_context(session)
+    context = _build_context(session, current_user.id)
     prompt = _build_prompt(context)
 
     try:
@@ -287,10 +306,12 @@ async def generate_insights(session: Session = Depends(get_session)):
         except Exception:
             raise HTTPException(500, f"Could not parse AI response: {raw[:300]}")
 
-    # Cache in settings
+    # Cache in settings with user-scoped keys
     from datetime import datetime
     now = datetime.now().isoformat(timespec="seconds")
-    for key, val in [("insights_cache", json.dumps(data)), ("insights_generated_at", now)]:
+    cache_key = f"insights_cache_{current_user.id}"
+    at_key = f"insights_generated_at_{current_user.id}"
+    for key, val in [(cache_key, json.dumps(data)), (at_key, now)]:
         s = session.get(Setting, key)
         if s:
             s.value = val

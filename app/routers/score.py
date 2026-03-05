@@ -13,8 +13,9 @@ from sqlmodel import Session, select, func
 
 from database import (
     get_session, Transaction, Category, Budget, Bill, BillPayment,
-    Achievement, Challenge,
+    Achievement, Challenge, User,
 )
+from deps import get_current_user
 
 router = APIRouter()
 
@@ -71,11 +72,12 @@ ACHIEVEMENT_DEFS = {
 # Score computation
 # ---------------------------------------------------------------------------
 
-def _month_totals(session: Session, month: int, year: int) -> tuple[float, float]:
+def _month_totals(session: Session, month: int, year: int, user_id: int) -> tuple[float, float]:
     """Return (income, spend) for a given month."""
     def _sum(is_credit: bool) -> float:
         return float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == is_credit,
                 func.strftime("%m", Transaction.date) == f"{month:02d}",
                 func.strftime("%Y", Transaction.date) == str(year),
@@ -84,8 +86,8 @@ def _month_totals(session: Session, month: int, year: int) -> tuple[float, float
     return _sum(True), _sum(False)
 
 
-def _compute_score(session: Session, month: int, year: int) -> dict:
-    income, spend = _month_totals(session, month, year)
+def _compute_score(session: Session, month: int, year: int, user_id: int = 1) -> dict:
+    income, spend = _month_totals(session, month, year, user_id)
     net = income - spend
 
     # ── 1. Savings rate (30 pts) — 20% savings rate = full score ──
@@ -94,7 +96,11 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
 
     # ── 2. Budget adherence (30 pts) ──
     budgets = session.exec(
-        select(Budget).where(Budget.month == month, Budget.year == year)
+        select(Budget).where(
+            Budget.user_id == user_id,
+            Budget.month == month,
+            Budget.year == year,
+        )
     ).all()
     budget_score = 30  # default full if no budgets set
     budget_detail = []
@@ -103,6 +109,7 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
         for b in budgets:
             cat_spend = float(session.exec(
                 select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.user_id == user_id,
                     Transaction.is_credit == False,
                     Transaction.category_id == b.category_id,
                     func.strftime("%m", Transaction.date) == f"{month:02d}",
@@ -121,6 +128,7 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
     uncat_cat = session.exec(select(Category).where(Category.name == "Uncategorised")).first()
     total_txns = session.exec(
         select(func.count(Transaction.id)).where(
+            Transaction.user_id == user_id,
             func.strftime("%m", Transaction.date) == f"{month:02d}",
             func.strftime("%Y", Transaction.date) == str(year),
             Transaction.is_credit == False,
@@ -131,6 +139,7 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
     if uncat_cat and total_txns > 0:
         uncat_txns = session.exec(
             select(func.count(Transaction.id)).where(
+                Transaction.user_id == user_id,
                 Transaction.category_id == uncat_cat.id,
                 func.strftime("%m", Transaction.date) == f"{month:02d}",
                 func.strftime("%Y", Transaction.date) == str(year),
@@ -149,6 +158,7 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
     fy_end = date(year, month, monthrange(year, month)[1])
     due_bills = session.exec(
         select(Bill).where(
+            Bill.user_id == user_id,
             Bill.is_active == True,
             Bill.next_due != None,
         )
@@ -193,14 +203,14 @@ def _compute_score(session: Session, month: int, year: int) -> dict:
 # Streak helpers
 # ---------------------------------------------------------------------------
 
-def _green_streak(session: Session, as_of: date) -> dict:
+def _green_streak(session: Session, as_of: date, user_id: int) -> dict:
     """Count consecutive months ending in as_of month where net > 0."""
     current = 0
     best = 0
     m, y = as_of.month, as_of.year
     # Walk backwards up to 36 months
     for _ in range(36):
-        income, spend = _month_totals(session, m, y)
+        income, spend = _month_totals(session, m, y, user_id)
         if income == 0 and spend == 0:
             break  # no data, stop
         if income > spend:
@@ -216,14 +226,18 @@ def _green_streak(session: Session, as_of: date) -> dict:
     return {"current": current, "best": best, "label": "Green months in a row"}
 
 
-def _budget_streak(session: Session, as_of: date) -> dict:
+def _budget_streak(session: Session, as_of: date, user_id: int) -> dict:
     """Consecutive months where all budgets were under."""
     current = 0
     best = 0
     m, y = as_of.month, as_of.year
     for _ in range(24):
         budgets = session.exec(
-            select(Budget).where(Budget.month == m, Budget.year == y)
+            select(Budget).where(
+                Budget.user_id == user_id,
+                Budget.month == m,
+                Budget.year == y,
+            )
         ).all()
         if not budgets:
             if current > 0:
@@ -237,6 +251,7 @@ def _budget_streak(session: Session, as_of: date) -> dict:
         for b in budgets:
             cat_spend = float(session.exec(
                 select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.user_id == user_id,
                     Transaction.is_credit == False,
                     Transaction.category_id == b.category_id,
                     func.strftime("%m", Transaction.date) == f"{m:02d}",
@@ -263,15 +278,22 @@ def _budget_streak(session: Session, as_of: date) -> dict:
 # Achievement unlock logic
 # ---------------------------------------------------------------------------
 
-def _check_achievements(session: Session, month: int, year: int, score_data: dict):
-    """Check and unlock any newly earned achievements."""
+def _check_achievements(session: Session, month: int, year: int, score_data: dict, user_id: int):
+    """Check and unlock any newly earned achievements. Keys are namespaced by user_id."""
     unlocked = []
     now = datetime.now().isoformat(timespec="seconds")
 
+    def _ns(key: str) -> str:
+        """Namespace an achievement key for this user."""
+        return f"{user_id}:{key}"
+
     def _unlock(key: str, data: dict = None):
-        existing = session.get(Achievement, key)
+        ns_key = _ns(key)
+        existing = session.exec(
+            select(Achievement).where(Achievement.key == ns_key)
+        ).first()
         if existing is None:
-            a = Achievement(key=key, unlocked_at=now,
+            a = Achievement(key=ns_key, unlocked_at=now,
                             data_json=json.dumps(data) if data else None)
             session.add(a)
             unlocked.append(key)
@@ -296,9 +318,10 @@ def _check_achievements(session: Session, month: int, year: int, score_data: dic
     if score_data["score"] >= 80:
         _unlock("score_80", {"month": month, "year": year, "score": score_data["score"]})
 
-    # Inbox zero — no flagged unreview transactions
+    # Inbox zero — no flagged unreviewed transactions for this user
     flagged = session.exec(
         select(func.count()).where(
+            Transaction.user_id == user_id,
             Transaction.is_flagged == True,
             Transaction.is_reviewed == False,
         )
@@ -308,7 +331,7 @@ def _check_achievements(session: Session, month: int, year: int, score_data: dic
 
     # Savings streak 3
     today = date(year, month, 1)
-    streak = _green_streak(session, today)
+    streak = _green_streak(session, today, user_id)
     if streak["current"] >= 3:
         _unlock("savings_streak_3", {"streak": streak["current"]})
 
@@ -326,19 +349,33 @@ def _check_achievements(session: Session, month: int, year: int, score_data: dic
 # ---------------------------------------------------------------------------
 
 @router.get("/api/score")
-def get_score(month: int = None, year: int = None, session: Session = Depends(get_session)):
+def get_score(
+    month: int = None,
+    year: int = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     today = date.today()
     m = month or today.month
     y = year or today.year
-    data = _compute_score(session, m, y)
-    newly_unlocked = _check_achievements(session, m, y, data)
+    data = _compute_score(session, m, y, current_user.id)
+    newly_unlocked = _check_achievements(session, m, y, data, current_user.id)
     data["newly_unlocked"] = newly_unlocked
     return data
 
 
 @router.get("/api/score/achievements")
-def get_achievements(session: Session = Depends(get_session)):
-    unlocked = {a.key: a for a in session.exec(select(Achievement)).all()}
+def get_achievements(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    # Fetch only this user's namespaced achievements
+    prefix = f"{current_user.id}:"
+    all_achievements = session.exec(
+        select(Achievement).where(Achievement.key.like(f"{prefix}%"))
+    ).all()
+    # Strip the namespace prefix for the key in the response
+    unlocked = {a.key[len(prefix):]: a for a in all_achievements}
     result = []
     for key, defn in ACHIEVEMENT_DEFS.items():
         ach = unlocked.get(key)
@@ -355,10 +392,13 @@ def get_achievements(session: Session = Depends(get_session)):
 
 
 @router.get("/api/score/streaks")
-def get_streaks(session: Session = Depends(get_session)):
+def get_streaks(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     today = date.today()
-    green = _green_streak(session, today)
-    budget = _budget_streak(session, today)
+    green = _green_streak(session, today, current_user.id)
+    budget = _budget_streak(session, today, current_user.id)
     return {"green": green, "budget": budget}
 
 
@@ -376,10 +416,14 @@ class ChallengeIn(BaseModel):
 
 
 @router.get("/api/challenges")
-def list_challenges(session: Session = Depends(get_session)):
+def list_challenges(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     today = date.today()
     challenges = session.exec(
         select(Challenge).where(
+            Challenge.user_id == current_user.id,
             Challenge.month == today.month,
             Challenge.year == today.year,
         )
@@ -393,6 +437,7 @@ def list_challenges(session: Session = Depends(get_session)):
         if c.challenge_type == "spend_limit" and c.category_id:
             progress = float(session.exec(
                 select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.user_id == current_user.id,
                     Transaction.is_credit == False,
                     Transaction.category_id == c.category_id,
                     func.strftime("%m", Transaction.date) == f"{c.month:02d}",
@@ -400,7 +445,7 @@ def list_challenges(session: Session = Depends(get_session)):
                 )
             ).one())
         elif c.challenge_type == "save_target":
-            income, spend = _month_totals(session, c.month, c.year)
+            income, spend = _month_totals(session, c.month, c.year, current_user.id)
             progress = max(0.0, income - spend)
 
         pct = round(min(100, progress / c.target_value * 100), 1) if c.target_value > 0 else 0
@@ -426,7 +471,11 @@ def list_challenges(session: Session = Depends(get_session)):
 
 
 @router.post("/api/challenges")
-def create_challenge(body: ChallengeIn, session: Session = Depends(get_session)):
+def create_challenge(
+    body: ChallengeIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     today = date.today()
     c = Challenge(
         name=body.name,
@@ -435,6 +484,7 @@ def create_challenge(body: ChallengeIn, session: Session = Depends(get_session))
         target_value=body.target_value,
         month=body.month or today.month,
         year=body.year or today.year,
+        user_id=current_user.id,
     )
     session.add(c)
     session.commit()
@@ -443,10 +493,16 @@ def create_challenge(body: ChallengeIn, session: Session = Depends(get_session))
 
 
 @router.delete("/api/challenges/{challenge_id}")
-def delete_challenge(challenge_id: int, session: Session = Depends(get_session)):
+def delete_challenge(
+    challenge_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     c = session.get(Challenge, challenge_id)
     if not c:
         raise HTTPException(404, "Challenge not found")
+    if c.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(c)
     session.commit()
     return {"ok": True}

@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
-from database import get_session, AcquisitionLot, Disposal
+from database import get_session, AcquisitionLot, Disposal, User
+from deps import get_current_user
 
 router = APIRouter()
 
@@ -68,8 +69,12 @@ def _compute_disposal(
 # ---------------------------------------------------------------------------
 
 @router.get("/api/cgt/lots")
-def list_lots(ticker: Optional[str] = None, session: Session = Depends(get_session)):
-    q = select(AcquisitionLot)
+def list_lots(
+    ticker: Optional[str] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    q = select(AcquisitionLot).where(AcquisitionLot.user_id == current_user.id)
     if ticker:
         q = q.where(AcquisitionLot.ticker == ticker.upper())
     lots = session.exec(q.order_by(AcquisitionLot.acquired_date.desc())).all()
@@ -96,7 +101,11 @@ def list_lots(ticker: Optional[str] = None, session: Session = Depends(get_sessi
 
 
 @router.post("/api/cgt/lots")
-def add_lot(body: LotIn, session: Session = Depends(get_session)):
+def add_lot(
+    body: LotIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     lot = AcquisitionLot(
         ticker=body.ticker.upper(),
         asset_type=body.asset_type,
@@ -105,6 +114,7 @@ def add_lot(body: LotIn, session: Session = Depends(get_session)):
         cost_per_unit_aud=body.cost_per_unit_aud,
         brokerage_aud=body.brokerage_aud,
         notes=body.notes,
+        user_id=current_user.id,
     )
     session.add(lot)
     session.commit()
@@ -113,10 +123,16 @@ def add_lot(body: LotIn, session: Session = Depends(get_session)):
 
 
 @router.delete("/api/cgt/lots/{lot_id}")
-def delete_lot(lot_id: int, session: Session = Depends(get_session)):
+def delete_lot(
+    lot_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     lot = session.get(AcquisitionLot, lot_id)
     if not lot:
         raise HTTPException(404, "Lot not found")
+    if lot.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     # Block deletion if disposals exist
     disposals = session.exec(select(Disposal).where(Disposal.lot_id == lot_id)).all()
     if disposals:
@@ -131,8 +147,12 @@ def delete_lot(lot_id: int, session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/cgt/disposals")
-def list_disposals(ticker: Optional[str] = None, session: Session = Depends(get_session)):
-    q = select(Disposal)
+def list_disposals(
+    ticker: Optional[str] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    q = select(Disposal).where(Disposal.user_id == current_user.id)
     if ticker:
         q = q.where(Disposal.ticker == ticker.upper())
     disposals = session.exec(q.order_by(Disposal.disposed_date.desc())).all()
@@ -155,10 +175,16 @@ def list_disposals(ticker: Optional[str] = None, session: Session = Depends(get_
 
 
 @router.post("/api/cgt/dispose")
-def record_disposal(body: DisposeIn, session: Session = Depends(get_session)):
+def record_disposal(
+    body: DisposeIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     lot = session.get(AcquisitionLot, body.lot_id)
     if not lot:
         raise HTTPException(404, "Acquisition lot not found")
+    if lot.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
 
     disposed_date = date.fromisoformat(body.disposed_date)
 
@@ -183,6 +209,7 @@ def record_disposal(body: DisposeIn, session: Session = Depends(get_session)):
         gain_aud=gain_aud,
         discount_eligible=discount_eligible,
         notes=body.notes,
+        user_id=current_user.id,
     )
     session.add(disposal)
     session.commit()
@@ -196,10 +223,16 @@ def record_disposal(body: DisposeIn, session: Session = Depends(get_session)):
 
 
 @router.delete("/api/cgt/disposals/{disposal_id}")
-def delete_disposal(disposal_id: int, session: Session = Depends(get_session)):
+def delete_disposal(
+    disposal_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     d = session.get(Disposal, disposal_id)
     if not d:
         raise HTTPException(404, "Disposal not found")
+    if d.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(d)
     session.commit()
     return {"ok": True}
@@ -210,7 +243,11 @@ def delete_disposal(disposal_id: int, session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/cgt/summary")
-def cgt_summary(fy: int = None, session: Session = Depends(get_session)):
+def cgt_summary(
+    fy: int = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Summarise capital gains for a financial year.
     fy=2025 means FY 2024-25 (1 Jul 2024 – 30 Jun 2025).
@@ -225,6 +262,7 @@ def cgt_summary(fy: int = None, session: Session = Depends(get_session)):
 
     disposals = session.exec(
         select(Disposal).where(
+            Disposal.user_id == current_user.id,
             Disposal.disposed_date >= fy_start,
             Disposal.disposed_date <= fy_end,
         )

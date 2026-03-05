@@ -55,6 +55,7 @@ class Category(SQLModel, table=True):
     icon:          str = "mdi:tag"
     is_income:     bool = False
     is_tax_relevant: bool = False
+    exclude_from_spend: bool = Field(default=False)  # e.g. Transfers — not personal spending
     parent_id:     Optional[int] = Field(default=None, foreign_key="category.id")
 
 
@@ -499,6 +500,10 @@ def _migrate():
     new_cols += [
         ("goal", "goal_type", "TEXT DEFAULT 'long_term'"),
     ]
+    # Category: exclude from personal spend totals (e.g. Transfers)
+    new_cols += [
+        ("category", "exclude_from_spend", "INTEGER DEFAULT 0"),
+    ]
 
     # Add user_id to all tables that need it
     for tbl in _USER_ID_TABLES:
@@ -511,6 +516,16 @@ def _migrate():
                 session.commit()
             except Exception:
                 pass  # column already exists
+
+        # Flag transfer categories as excluded from personal spend
+        try:
+            session.exec(text(
+                "UPDATE category SET exclude_from_spend=1 "
+                "WHERE name IN ('Transfers', 'Investment Transfer') AND exclude_from_spend=0"
+            ))
+            session.commit()
+        except Exception:
+            pass
 
 
 def _seed_defaults():

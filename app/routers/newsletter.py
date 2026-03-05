@@ -17,9 +17,9 @@ from sqlmodel import Session, select, func
 
 from database import (
     get_session, engine, Transaction, Category, Budget, Bill, BillPayment,
-    Goal, Setting, MerchantEnrichment,
+    Goal, Setting, MerchantEnrichment, User,
 )
-from deps import get_setting
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/newsletter", tags=["newsletter"])
 
@@ -39,7 +39,7 @@ def _pct(part: float, total: float) -> str:
     return f"{part / total * 100:.1f}%"
 
 
-def _gather(session: Session) -> dict:
+def _gather(session: Session, user_id: int) -> dict:
     today = date.today()
     week_start = today - timedelta(days=7)
     prev_week_start = today - timedelta(days=14)
@@ -53,6 +53,7 @@ def _gather(session: Session) -> dict:
     def _week_sum(is_credit: bool, start: date, end: date) -> float:
         return float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == is_credit,
                 Transaction.date >= start,
                 Transaction.date <= end,
@@ -72,6 +73,7 @@ def _gather(session: Session) -> dict:
     # ── Top 5 transactions this week ──
     top_txns_rows = session.exec(
         select(Transaction).where(
+            Transaction.user_id == user_id,
             Transaction.is_credit == False,
             Transaction.date >= week_start,
             Transaction.date <= today,
@@ -100,6 +102,7 @@ def _gather(session: Session) -> dict:
     # ── Budget status (current month) ──
     budgets_rows = session.exec(
         select(Budget).where(
+            Budget.user_id == user_id,
             Budget.month == today.month,
             Budget.year == today.year,
         )
@@ -111,6 +114,7 @@ def _gather(session: Session) -> dict:
             continue
         spend = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == False,
                 Transaction.category_id == b.category_id,
                 func.strftime("%m", Transaction.date) == f"{today.month:02d}",
@@ -134,11 +138,15 @@ def _gather(session: Session) -> dict:
     uncategorised = 0
     if uncat_cat:
         uncategorised = int(session.exec(
-            select(func.count()).where(Transaction.category_id == uncat_cat.id)
+            select(func.count()).where(
+                Transaction.user_id == user_id,
+                Transaction.category_id == uncat_cat.id,
+            )
         ).one())
 
     flagged = int(session.exec(
         select(func.count()).where(
+            Transaction.user_id == user_id,
             Transaction.is_flagged == True,
             Transaction.is_reviewed == False,
         )
@@ -146,6 +154,7 @@ def _gather(session: Session) -> dict:
 
     overdue_bills = session.exec(
         select(Bill).where(
+            Bill.user_id == user_id,
             Bill.is_active == True,
             Bill.next_due != None,
             Bill.next_due < today,
@@ -154,6 +163,7 @@ def _gather(session: Session) -> dict:
 
     due_soon_bills = session.exec(
         select(Bill).where(
+            Bill.user_id == user_id,
             Bill.is_active == True,
             Bill.next_due != None,
             Bill.next_due >= today,
@@ -163,7 +173,10 @@ def _gather(session: Session) -> dict:
 
     # ── Goals ──
     goals_rows = session.exec(
-        select(Goal).where(Goal.is_complete == False).order_by(Goal.target_date)
+        select(Goal).where(
+            Goal.user_id == user_id,
+            Goal.is_complete == False,
+        ).order_by(Goal.target_date)
     ).all()
     goals = []
     for g in goals_rows:
@@ -178,7 +191,7 @@ def _gather(session: Session) -> dict:
 
     # ── Finance score (current month) ──
     from routers.score import _compute_score
-    score_data = _compute_score(session, today.month, today.year)
+    score_data = _compute_score(session, today.month, today.year, user_id)
 
     # ── Roadmap — next priority items ──
     ROADMAP_ITEMS = [
@@ -653,13 +666,20 @@ def _build_html(data: dict, app_url: str, insights: str) -> str:
 # ---------------------------------------------------------------------------
 
 @router.get("/preview")
-def preview_newsletter(session: Session = Depends(get_session)):
+def preview_newsletter(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Return newsletter data as JSON (no email sent)."""
-    return _gather(session)
+    return _gather(session, current_user.id)
 
 
 @router.post("/send")
-async def send_newsletter(request: Request, session: Session = Depends(get_session)):
+async def send_newsletter(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Build and send the weekly newsletter email."""
     gmail_address    = get_setting(session, "gmail_address", "")
     gmail_password   = get_setting(session, "gmail_app_password", "")
@@ -684,7 +704,7 @@ async def send_newsletter(request: Request, session: Session = Depends(get_sessi
     if not newsletter_email:
         raise HTTPException(400, "Newsletter recipient email not configured in Settings.")
 
-    data     = _gather(session)
+    data     = _gather(session, current_user.id)
     insights = await _generate_insights(data, api_key) if api_key else ""
     html     = _build_html(data, app_url, insights)
 

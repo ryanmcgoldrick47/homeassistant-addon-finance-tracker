@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import calendar
+from datetime import datetime, timezone, date as date_type
 from typing import Optional
 
 import httpx
@@ -8,7 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import ShareHolding, get_session
+from database import ShareHolding, get_session, User
+from deps import get_current_user
 
 router = APIRouter(prefix="/api/investments", tags=["investments"])
 
@@ -40,6 +42,28 @@ async def _fetch_aud_per_usd(client: httpx.AsyncClient) -> float:
         return 1.58  # fallback
 
 
+async def _fetch_historical_aud_per_usd(client: httpx.AsyncClient, purchase_date: date_type) -> float:
+    """Return AUD per 1 USD for a specific date using Yahoo Finance historical data."""
+    try:
+        # Get a 3-day window around the purchase date to handle weekends/holidays
+        ts_start = calendar.timegm(purchase_date.timetuple()) - 86400
+        ts_end   = calendar.timegm(purchase_date.timetuple()) + 86400 * 3
+        r = await client.get(
+            f"{YAHOO_BASE}/AUDUSD=X",
+            params={"interval": "1d", "period1": ts_start, "period2": ts_end},
+            headers=YAHOO_HEADERS,
+            timeout=10,
+        )
+        r.raise_for_status()
+        closes = r.json()["chart"]["result"][0]["indicators"]["quote"][0]["close"]
+        closes = [c for c in closes if c is not None]
+        if closes:
+            return round(1 / closes[0], 6)  # AUDUSD=X gives USD per AUD → invert for AUD per USD
+    except Exception:
+        pass
+    return await _fetch_aud_per_usd(client)  # fall back to current rate
+
+
 def _computed_fields(h: ShareHolding) -> dict:
     m = h.model_dump()
     m["gain_display"] = round(h.gain_aud, 2)
@@ -48,15 +72,54 @@ def _computed_fields(h: ShareHolding) -> dict:
 
 
 @router.get("")
-def list_holdings(session: Session = Depends(get_session)):
-    holdings = session.exec(select(ShareHolding).order_by(ShareHolding.value_aud.desc())).all()
+async def list_holdings(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    holdings = session.exec(
+        select(ShareHolding).where(
+            ShareHolding.user_id == current_user.id,
+        ).order_by(ShareHolding.value_aud.desc())
+    ).all()
+    fetched_at = max((h.price_fetched_at for h in holdings if h.price_fetched_at), default=None)
+    stale = _prices_stale(fetched_at)
+    # Auto-refresh if stale
+    if stale and holdings:
+        async with httpx.AsyncClient() as client:
+            aud_per_usd = await _fetch_aud_per_usd(client)
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+            for h in holdings:
+                try:
+                    price, currency = await _fetch_yahoo_price(client, h.ticker)
+                    h.currency = currency
+                    h.price_aud = round(price * aud_per_usd, 4) if currency != "AUD" else round(price, 4)
+                    h.value_aud = round(h.qty * h.price_aud, 2)
+                    h.cost_basis_aud = round(h.qty * h.avg_cost_aud, 2)
+                    h.gain_aud = round(h.value_aud - h.cost_basis_aud, 2)
+                    h.gain_pct = round(h.gain_aud / h.cost_basis_aud * 100, 2) if h.cost_basis_aud > 0 else 0.0
+                    h.price_fetched_at = now_str
+                    session.add(h)
+                except Exception:
+                    pass
+        session.commit()
+        # Re-query after refresh
+        holdings = session.exec(
+            select(ShareHolding).where(
+                ShareHolding.user_id == current_user.id,
+            ).order_by(ShareHolding.value_aud.desc())
+        ).all()
     return [_computed_fields(h) for h in holdings]
 
 
 @router.get("/benchmark")
-async def benchmark(session: Session = Depends(get_session)):
+async def benchmark(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Compare portfolio total gain % vs ASX 200 and S&P 500 YTD performance."""
-    holdings = session.exec(select(ShareHolding)).all()
+    holdings = session.exec(
+        select(ShareHolding).where(ShareHolding.user_id == current_user.id)
+    ).all()
     total_value = sum(h.value_aud for h in holdings)
     total_cost = sum(h.cost_basis_aud for h in holdings)
     portfolio_gain_pct = round((total_value - total_cost) / total_cost * 100, 2) if total_cost > 0 else 0.0
@@ -92,8 +155,13 @@ async def benchmark(session: Session = Depends(get_session)):
 
 
 @router.get("/summary")
-def holdings_summary(session: Session = Depends(get_session)):
-    holdings = session.exec(select(ShareHolding)).all()
+def holdings_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    holdings = session.exec(
+        select(ShareHolding).where(ShareHolding.user_id == current_user.id)
+    ).all()
     total_value = round(sum(h.value_aud for h in holdings), 2)
     total_cost = round(sum(h.cost_basis_aud for h in holdings), 2)
     total_gain = round(total_value - total_cost, 2)
@@ -106,7 +174,22 @@ def holdings_summary(session: Session = Depends(get_session)):
         "total_gain_pct": gain_pct,
         "holdings_count": len(holdings),
         "price_fetched_at": fetched_at,
+        "prices_stale": _prices_stale(fetched_at),
     }
+
+
+def _prices_stale(fetched_at: Optional[str], max_age_hours: int = 24) -> bool:
+    """Return True if prices haven't been refreshed within max_age_hours."""
+    if not fetched_at:
+        return True
+    try:
+        dt = datetime.fromisoformat(fetched_at.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        return age_hours > max_age_hours
+    except Exception:
+        return True
 
 
 class HoldingCreate(BaseModel):
@@ -114,22 +197,50 @@ class HoldingCreate(BaseModel):
     name: Optional[str] = None
     qty: float
     avg_cost_aud: float
+    purchase_currency: str = "AUD"  # "AUD" or "USD" — auto-converted to AUD on save
+    purchase_date: Optional[str] = None  # YYYY-MM-DD — used for historical FX lookup
     broker: str = "stake"
     notes: Optional[str] = None
 
 
 @router.post("")
-def create_holding(body: HoldingCreate, session: Session = Depends(get_session)):
+async def create_holding(
+    body: HoldingCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     ticker = body.ticker.upper().strip()
-    cost_basis = round(body.qty * body.avg_cost_aud, 2)
+    avg_cost_aud = body.avg_cost_aud
+    fx_rate_used: Optional[float] = None
+    parsed_date: Optional[date_type] = None
+
+    if body.purchase_date:
+        try:
+            parsed_date = date_type.fromisoformat(body.purchase_date)
+        except ValueError:
+            pass
+
+    # If price was entered in USD, convert to AUD using historical or current rate
+    if body.purchase_currency.upper() == "USD":
+        async with httpx.AsyncClient() as client:
+            if parsed_date:
+                fx_rate_used = await _fetch_historical_aud_per_usd(client, parsed_date)
+            else:
+                fx_rate_used = await _fetch_aud_per_usd(client)
+        avg_cost_aud = round(avg_cost_aud * fx_rate_used, 4)
+
+    cost_basis = round(body.qty * avg_cost_aud, 2)
     h = ShareHolding(
         ticker=ticker,
         name=body.name,
         qty=body.qty,
-        avg_cost_aud=body.avg_cost_aud,
+        avg_cost_aud=avg_cost_aud,
         cost_basis_aud=cost_basis,
+        purchase_date=parsed_date,
+        purchase_fx_rate=fx_rate_used,
         broker=body.broker,
         notes=body.notes,
+        user_id=current_user.id,
     )
     session.add(h)
     session.commit()
@@ -147,10 +258,17 @@ class HoldingUpdate(BaseModel):
 
 
 @router.patch("/{holding_id}")
-def update_holding(holding_id: int, body: HoldingUpdate, session: Session = Depends(get_session)):
+def update_holding(
+    holding_id: int,
+    body: HoldingUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     h = session.get(ShareHolding, holding_id)
     if not h:
         raise HTTPException(404, "Not found")
+    if h.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     if body.ticker is not None:
         h.ticker = body.ticker.upper().strip()
     if body.name is not None:
@@ -177,19 +295,30 @@ def update_holding(holding_id: int, body: HoldingUpdate, session: Session = Depe
 
 
 @router.delete("/{holding_id}")
-def delete_holding(holding_id: int, session: Session = Depends(get_session)):
+def delete_holding(
+    holding_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     h = session.get(ShareHolding, holding_id)
     if not h:
         raise HTTPException(404, "Not found")
+    if h.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(h)
     session.commit()
     return {"ok": True}
 
 
 @router.post("/refresh-prices")
-async def refresh_prices(session: Session = Depends(get_session)):
+async def refresh_prices(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Fetch latest prices from Yahoo Finance for all holdings."""
-    holdings = session.exec(select(ShareHolding)).all()
+    holdings = session.exec(
+        select(ShareHolding).where(ShareHolding.user_id == current_user.id)
+    ).all()
     if not holdings:
         return {"ok": True, "updated": 0, "errors": []}
 
@@ -220,7 +349,11 @@ async def refresh_prices(session: Session = Depends(get_session)):
     session.commit()
 
     updated = len(holdings) - len(errors)
-    holdings_out = session.exec(select(ShareHolding).order_by(ShareHolding.value_aud.desc())).all()
+    holdings_out = session.exec(
+        select(ShareHolding).where(
+            ShareHolding.user_id == current_user.id,
+        ).order_by(ShareHolding.value_aud.desc())
+    ).all()
     total_value = round(sum(h.value_aud for h in holdings_out), 2)
     return {
         "ok": True,

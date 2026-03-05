@@ -1,6 +1,41 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v27",
+    "title": "Merchant Logos + Sticky Settings + Mortgage Interest",
+    "items": [
+      "Merchants page now shows merchant logos (Google favicon service) and clean names from enrichment data",
+      "Settings page: Save Settings button pinned to sticky header — always visible while scrolling",
+      "New 'Mortgage Interest' category added (neutral grey, not tax-relevant for owner-occupied homes)"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v26",
+    "title": "Budget Drill-Down + Bill Date Prediction",
+    "items": [
+      "Budget drill-down: click any budget row (dashboard or Budgets page) to see all transactions contributing to that budget",
+      "Budget modal shows category, progress bar, transaction list with merchant logos, and a 'View in Transactions' jump link",
+      "Bills: 'Predict Due Dates' button auto-detects next due dates from transaction history with a confidence score",
+      "Predicted dates shown inline — apply individually or all at once",
+      "Confidence badges: green ≥80%, amber ≥50%"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v25",
+    "title": "Investment Grouping + UI Polish + CSV Fixes",
+    "items": [
+      "Investments page groups holdings by ticker — one row per stock with total qty, weighted avg cost, and combined gain/loss",
+      "Click the › chevron to expand a ticker and see individual purchase lots (fixed Alpine.js reactivity issue)",
+      "Dashboard NW/Portfolio sparkline hover now shows date label even with a single snapshot",
+      "Sidebar scrollbar styled to match dark theme (thin, semi-transparent)",
+      "CSV import now skips bank preamble rows (fixes St George Credit Card import errors)",
+      "Budget Progress card shows only active categories, sorted by urgency (highest % used first)"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v24",
     "title": "Chat History + Interactive RBA Chart",
     "items": [

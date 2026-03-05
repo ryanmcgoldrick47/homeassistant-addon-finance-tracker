@@ -10,8 +10,8 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select, func
 from pydantic import BaseModel
 
-from database import Transaction, Category, Account, MerchantEnrichment, get_session
-from deps import get_setting
+from database import Transaction, Category, Account, Bill, MerchantEnrichment, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
 
@@ -34,6 +34,8 @@ class TransactionUpdate(BaseModel):
     tax_deductible: Optional[bool] = None
     tax_category: Optional[str] = None
     notes: Optional[str] = None
+    is_reimbursable: Optional[bool] = None
+    reimbursement_received: Optional[bool] = None
 
 
 class BulkUpdate(BaseModel):
@@ -42,6 +44,7 @@ class BulkUpdate(BaseModel):
     is_reviewed: Optional[bool] = None
     is_flagged: Optional[bool] = None
     tax_deductible: Optional[bool] = None
+    is_reimbursable: Optional[bool] = None
     delete: bool = False
 
 
@@ -52,15 +55,22 @@ def list_transactions(
     is_flagged: Optional[bool] = None,
     is_reviewed: Optional[bool] = None,
     tax_deductible: Optional[bool] = None,
+    is_overseas: Optional[bool] = None,
+    is_credit: Optional[bool] = None,
     month: Optional[int] = None,
     year: Optional[int] = None,
     fy: Optional[int] = None,   # financial year ending, e.g. 2025 = Jul24–Jun25
+    date_from: Optional[date] = None,
+    date_to: Optional[date] = None,
+    amount_min: Optional[float] = None,
+    amount_max: Optional[float] = None,
     search: Optional[str] = None,
     limit: int = Query(default=200, le=1000),
     offset: int = 0,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    stmt = select(Transaction).order_by(Transaction.date.desc())
+    stmt = select(Transaction).where(Transaction.user_id == current_user.id).order_by(Transaction.date.desc())
 
     if account_id:
         stmt = stmt.where(Transaction.account_id == account_id)
@@ -72,6 +82,18 @@ def list_transactions(
         stmt = stmt.where(Transaction.is_reviewed == is_reviewed)
     if tax_deductible is not None:
         stmt = stmt.where(Transaction.tax_deductible == tax_deductible)
+    if is_overseas is not None:
+        stmt = stmt.where(Transaction.is_overseas == is_overseas)
+    if is_credit is not None:
+        stmt = stmt.where(Transaction.is_credit == is_credit)
+    if date_from:
+        stmt = stmt.where(Transaction.date >= date_from)
+    if date_to:
+        stmt = stmt.where(Transaction.date <= date_to)
+    if amount_min is not None:
+        stmt = stmt.where(Transaction.amount >= amount_min)
+    if amount_max is not None:
+        stmt = stmt.where(Transaction.amount <= amount_max)
     if month and year:
         stmt = stmt.where(
             func.strftime("%m", Transaction.date) == f"{month:02d}",
@@ -115,7 +137,11 @@ def list_transactions(
 
 
 @router.post("")
-def create_transaction(body: TransactionCreate, session: Session = Depends(get_session)):
+def create_transaction(
+    body: TransactionCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     raw = f"{body.date}|{body.description}|{body.amount:.2f}|manual"
     raw_hash = hashlib.sha256(raw.encode()).hexdigest()
     txn = Transaction(
@@ -129,6 +155,7 @@ def create_transaction(body: TransactionCreate, session: Session = Depends(get_s
         tax_deductible=body.tax_deductible,
         is_reviewed=True,  # manually entered = already reviewed
         raw_hash=raw_hash,
+        user_id=current_user.id,
     )
     session.add(txn)
     session.commit()
@@ -142,9 +169,10 @@ def spend_summary(
     year: Optional[int] = None,
     fy: Optional[int] = None,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """Spend by category for a period."""
-    stmt = select(Transaction)
+    stmt = select(Transaction).where(Transaction.user_id == current_user.id)
     if month and year:
         stmt = stmt.where(
             func.strftime("%m", Transaction.date) == f"{month:02d}",
@@ -168,13 +196,16 @@ def spend_summary(
 
 
 @router.get("/summary/recent-month")
-def recent_month(session: Session = Depends(get_session)):
+def recent_month(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Return the most recent month/year that has transactions."""
     row = session.exec(
         select(
             func.strftime("%m", Transaction.date),
             func.strftime("%Y", Transaction.date),
-        ).order_by(Transaction.date.desc()).limit(1)
+        ).where(Transaction.user_id == current_user.id).order_by(Transaction.date.desc()).limit(1)
     ).first()
     if not row:
         from datetime import date as dt
@@ -194,8 +225,9 @@ def export_transactions(
     fy: Optional[int] = None,
     search: Optional[str] = None,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    stmt = select(Transaction).order_by(Transaction.date.desc())
+    stmt = select(Transaction).where(Transaction.user_id == current_user.id).order_by(Transaction.date.desc())
     if account_id:
         stmt = stmt.where(Transaction.account_id == account_id)
     if category_id is not None:
@@ -254,6 +286,57 @@ def export_transactions(
     )
 
 
+@router.get("/upcoming")
+def upcoming_transactions(
+    days: int = Query(default=60, le=365),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Return predicted upcoming transactions for the next N days, derived from active bill schedules."""
+    from datetime import timedelta
+    FREQ_DAYS = {"weekly": 7, "fortnightly": 14, "monthly": 30, "quarterly": 91, "annual": 365}
+
+    today = date.today()
+    cutoff = today + timedelta(days=days)
+
+    bills = session.exec(
+        select(Bill).where(
+            Bill.user_id == current_user.id,
+            Bill.is_active == True,
+            Bill.next_due != None,
+        )
+    ).all()
+
+    results = []
+    cat_cache: dict[int, str] = {}
+    for bill in bills:
+        due = bill.next_due
+        interval = timedelta(days=FREQ_DAYS.get(bill.frequency, 30))
+        # Walk forward through bill schedule
+        while due <= cutoff:
+            if due >= today:
+                cat_name = None
+                if bill.category_id:
+                    if bill.category_id not in cat_cache:
+                        cat = session.get(Category, bill.category_id)
+                        cat_cache[bill.category_id] = cat.name if cat else None
+                    cat_name = cat_cache[bill.category_id]
+                results.append({
+                    "bill_id": bill.id,
+                    "bill_name": bill.name,
+                    "amount": round(bill.amount_cents / 100, 2),
+                    "date": str(due),
+                    "category_id": bill.category_id,
+                    "category_name": cat_name,
+                    "frequency": bill.frequency,
+                    "is_predicted": True,
+                })
+            due = due + interval
+
+    results.sort(key=lambda x: x["date"])
+    return results
+
+
 @router.get("/merchants")
 def merchant_analytics(
     month: Optional[int] = None,
@@ -261,8 +344,12 @@ def merchant_analytics(
     fy: Optional[int] = None,
     limit: int = Query(default=20, le=100),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
-    stmt = select(Transaction).where(Transaction.is_credit == False)
+    stmt = select(Transaction).where(
+        Transaction.user_id == current_user.id,
+        Transaction.is_credit == False,
+    )
     if month and year:
         stmt = stmt.where(
             func.strftime("%m", Transaction.date) == f"{month:02d}",
@@ -280,6 +367,7 @@ def merchant_analytics(
         key = t.description.strip().upper()[:50]
         if key not in merchants:
             merchants[key] = {
+                'raw_key': key,
                 'name': t.description,
                 'count': 0,
                 'total': 0.0,
@@ -288,6 +376,13 @@ def merchant_analytics(
         merchants[key]['count'] += 1
         merchants[key]['total'] += t.amount
 
+    # Bulk-load enrichments for all raw keys
+    raw_keys = list(merchants.keys())
+    enrichments: dict[str, MerchantEnrichment] = {}
+    if raw_keys:
+        for e in session.exec(select(MerchantEnrichment).where(MerchantEnrichment.raw_key.in_(raw_keys))).all():
+            enrichments[e.raw_key] = e
+
     result = sorted(merchants.values(), key=lambda x: x['total'], reverse=True)[:limit]
     for m in result:
         cat = session.get(Category, m['category_id']) if m['category_id'] else None
@@ -295,20 +390,29 @@ def merchant_analytics(
         m['category_colour'] = cat.colour if cat else '#d1d5db'
         m['avg'] = round(m['total'] / m['count'], 2)
         m['total'] = round(m['total'], 2)
+        enr = enrichments.get(m['raw_key'])
+        m['clean_name'] = enr.clean_name if enr and enr.clean_name else None
+        m['domain'] = enr.domain if enr and enr.domain else None
+        m['logo_url'] = f"https://www.google.com/s2/favicons?domain={enr.domain}&sz=64" if enr and enr.domain else None
         del m['category_id']
+        del m['raw_key']
 
     return result
 
 
 @router.patch("/bulk")
-def bulk_update(body: BulkUpdate, session: Session = Depends(get_session)):
+def bulk_update(
+    body: BulkUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     if not body.ids:
         return {"updated": 0, "deleted": 0}
     updated = 0
     deleted = 0
     for txn_id in body.ids:
         txn = session.get(Transaction, txn_id)
-        if not txn:
+        if not txn or txn.user_id != current_user.id:
             continue
         if body.delete:
             session.delete(txn)
@@ -322,6 +426,8 @@ def bulk_update(body: BulkUpdate, session: Session = Depends(get_session)):
                 txn.is_flagged = body.is_flagged
             if body.tax_deductible is not None:
                 txn.tax_deductible = body.tax_deductible
+            if body.is_reimbursable is not None:
+                txn.is_reimbursable = body.is_reimbursable
             session.add(txn)
             updated += 1
     session.commit()
@@ -333,10 +439,13 @@ def update_transaction(
     txn_id: int,
     body: TransactionUpdate,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     txn = session.get(Transaction, txn_id)
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
+    if txn.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     data = body.model_dump(exclude_none=True)
     for k, v in data.items():
         setattr(txn, k, v)
@@ -346,11 +455,53 @@ def update_transaction(
     return txn
 
 
+@router.get("/reimbursable-summary")
+def reimbursable_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Summary of reimbursable work expenses: pending vs received, with transaction list."""
+    txns = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.is_reimbursable == True,
+        ).order_by(Transaction.date.desc())
+    ).all()
+
+    cats = {c.id: c for c in session.exec(select(Category)).all()}
+    pending = []
+    received = []
+    for t in txns:
+        cat = cats.get(t.category_id)
+        row = {
+            "id": t.id,
+            "date": str(t.date),
+            "description": t.description,
+            "amount": float(t.amount),
+            "category_name": cat.name if cat else "Uncategorised",
+            "reimbursement_received": t.reimbursement_received,
+        }
+        if t.reimbursement_received:
+            received.append(row)
+        else:
+            pending.append(row)
+
+    return {
+        "pending_count": len(pending),
+        "pending_total": round(sum(r["amount"] for r in pending), 2),
+        "received_count": len(received),
+        "received_total": round(sum(r["amount"] for r in received), 2),
+        "pending": pending,
+        "received": received,
+    }
+
+
 @router.get("/review-queue")
 def review_queue(
     mode: str = "categorise",  # categorise | tax | receipts
     limit: int = 30,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     """
     Return transactions for SortSwipe review.
@@ -371,6 +522,7 @@ def review_queue(
 
     if mode == "categorise":
         stmt = select(Transaction).where(
+            Transaction.user_id == current_user.id,
             Transaction.is_credit == False,
             Transaction.is_reviewed == False,
         )
@@ -389,6 +541,7 @@ def review_queue(
         else:
             txns = session.exec(
                 select(Transaction).where(
+                    Transaction.user_id == current_user.id,
                     Transaction.is_credit == False,
                     Transaction.is_reviewed == False,
                     Transaction.tax_deductible == False,
@@ -399,6 +552,7 @@ def review_queue(
     elif mode == "receipts":
         txns = session.exec(
             select(Transaction).where(
+                Transaction.user_id == current_user.id,
                 Transaction.tax_deductible == True,
                 Transaction.is_credit == False,
                 Transaction.amount >= 300,
@@ -420,10 +574,16 @@ def review_queue(
 
 
 @router.patch("/{txn_id}/review")
-def mark_reviewed(txn_id: int, session: Session = Depends(get_session)):
+def mark_reviewed(
+    txn_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     txn = session.get(Transaction, txn_id)
     if not txn:
         raise HTTPException(status_code=404, detail="Not found")
+    if txn.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     txn.is_reviewed = True
     txn.is_flagged = False
     session.add(txn)
@@ -432,10 +592,16 @@ def mark_reviewed(txn_id: int, session: Session = Depends(get_session)):
 
 
 @router.delete("/{txn_id}")
-def delete_transaction(txn_id: int, session: Session = Depends(get_session)):
+def delete_transaction(
+    txn_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     txn = session.get(Transaction, txn_id)
     if not txn:
         raise HTTPException(status_code=404, detail="Not found")
+    if txn.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Access denied")
     session.delete(txn)
     session.commit()
     return {"ok": True}

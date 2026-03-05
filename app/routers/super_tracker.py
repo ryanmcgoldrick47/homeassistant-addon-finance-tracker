@@ -6,8 +6,8 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, select
 
-from database import SuperSnapshot, SuperContribution, get_session
-from deps import get_setting
+from database import SuperSnapshot, SuperContribution, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/super", tags=["super"])
 
@@ -61,9 +61,14 @@ def _balance_percentile(balance: float, median: float) -> int:
 # ---------------------------------------------------------------------------
 
 @router.get("/summary")
-def super_summary(session: Session = Depends(get_session)):
+def super_summary(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snapshots = session.exec(
-        select(SuperSnapshot).order_by(SuperSnapshot.snapshot_date.desc())
+        select(SuperSnapshot).where(
+            SuperSnapshot.user_id == current_user.id,
+        ).order_by(SuperSnapshot.snapshot_date.desc())
     ).all()
     latest = snapshots[0] if snapshots else None
 
@@ -94,14 +99,19 @@ def super_summary(session: Session = Depends(get_session)):
     today    = date.today()
     fy_start = date(today.year - 1 if today.month < 7 else today.year, 7, 1)
     contribs = session.exec(
-        select(SuperContribution).where(SuperContribution.contribution_date >= fy_start)
+        select(SuperContribution).where(
+            SuperContribution.user_id == current_user.id,
+            SuperContribution.contribution_date >= fy_start,
+        )
     ).all()
     ytd_employer  = round(sum(c.amount_aud for c in contribs if c.type == "employer"),  2)
     ytd_voluntary = round(sum(c.amount_aud for c in contribs if c.type in ("employee", "voluntary")), 2)
 
     # All contributions (for contribution list)
     all_contribs = session.exec(
-        select(SuperContribution).order_by(SuperContribution.contribution_date.desc()).limit(50)
+        select(SuperContribution).where(
+            SuperContribution.user_id == current_user.id,
+        ).order_by(SuperContribution.contribution_date.desc()).limit(50)
     ).all()
 
     return {
@@ -132,9 +142,14 @@ def super_summary(session: Session = Depends(get_session)):
 
 
 @router.get("/chart")
-def super_chart(session: Session = Depends(get_session)):
+def super_chart(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snapshots = session.exec(
-        select(SuperSnapshot).order_by(SuperSnapshot.snapshot_date)
+        select(SuperSnapshot).where(
+            SuperSnapshot.user_id == current_user.id,
+        ).order_by(SuperSnapshot.snapshot_date)
     ).all()
     return [
         {
@@ -147,9 +162,14 @@ def super_chart(session: Session = Depends(get_session)):
 
 
 @router.get("/snapshots")
-def list_snapshots(session: Session = Depends(get_session)):
+def list_snapshots(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     rows = session.exec(
-        select(SuperSnapshot).order_by(SuperSnapshot.snapshot_date.desc())
+        select(SuperSnapshot).where(
+            SuperSnapshot.user_id == current_user.id,
+        ).order_by(SuperSnapshot.snapshot_date.desc())
     ).all()
     return [
         {
@@ -164,7 +184,11 @@ def list_snapshots(session: Session = Depends(get_session)):
 
 
 @router.post("/snapshot")
-async def add_snapshot(request: Request, session: Session = Depends(get_session)):
+async def add_snapshot(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from datetime import datetime
     data = await request.json()
     try:
@@ -178,6 +202,7 @@ async def add_snapshot(request: Request, session: Session = Depends(get_session)
         balance_aud=float(data.get("balance_aud", 0)),
         notes=data.get("notes") or None,
         created_at=datetime.utcnow().isoformat(),
+        user_id=current_user.id,
     )
     session.add(snap)
     session.commit()
@@ -186,17 +211,27 @@ async def add_snapshot(request: Request, session: Session = Depends(get_session)
 
 
 @router.delete("/snapshot/{snap_id}")
-def delete_snapshot(snap_id: int, session: Session = Depends(get_session)):
+def delete_snapshot(
+    snap_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snap = session.get(SuperSnapshot, snap_id)
     if not snap:
         raise HTTPException(404, "Not found")
+    if snap.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(snap)
     session.commit()
     return {"ok": True}
 
 
 @router.post("/contribution")
-async def add_contribution(request: Request, session: Session = Depends(get_session)):
+async def add_contribution(
+    request: Request,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     data = await request.json()
     try:
         contrib_date = date.fromisoformat(data["contribution_date"])
@@ -210,6 +245,7 @@ async def add_contribution(request: Request, session: Session = Depends(get_sess
         type=data.get("type", "employer"),
         source=data.get("source") or None,
         notes=data.get("notes") or None,
+        user_id=current_user.id,
     )
     session.add(contrib)
     session.commit()
@@ -223,10 +259,16 @@ async def add_contribution(request: Request, session: Session = Depends(get_sess
 
 
 @router.delete("/contribution/{contrib_id}")
-def delete_contribution(contrib_id: int, session: Session = Depends(get_session)):
+def delete_contribution(
+    contrib_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     contrib = session.get(SuperContribution, contrib_id)
     if not contrib:
         raise HTTPException(404, "Not found")
+    if contrib.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(contrib)
     session.commit()
     return {"ok": True}

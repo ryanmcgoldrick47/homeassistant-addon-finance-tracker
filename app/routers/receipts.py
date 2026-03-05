@@ -10,11 +10,13 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from sqlmodel import Session
 
-from database import Transaction, get_session
+from database import Transaction, get_session, User
+from deps import get_current_user
 
 router = APIRouter(tags=["receipts"])
 
-RECEIPTS_DIR = "/config/finance_tracker/receipts"
+_DATA_DIR = os.environ.get("FINANCE_DATA_DIR", "/data")
+RECEIPTS_DIR = os.path.join(_DATA_DIR, "receipts")
 ALLOWED_TYPES = {
     "image/jpeg", "image/png", "image/gif", "image/webp",
     "application/pdf",
@@ -31,10 +33,13 @@ async def upload_receipt(
     txn_id: int,
     file: UploadFile = File(...),
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     txn = session.get(Transaction, txn_id)
     if not txn:
         raise HTTPException(404, "Transaction not found")
+    if txn.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
 
     if file.content_type not in ALLOWED_TYPES:
         raise HTTPException(400, f"Unsupported file type: {file.content_type}. Allowed: JPEG, PNG, GIF, WebP, PDF")
@@ -73,17 +78,22 @@ def serve_receipt(filename: str):
     path = os.path.join(RECEIPTS_DIR, filename)
     if not os.path.exists(path):
         raise HTTPException(404, "Receipt not found")
-    return FileResponse(path)
+    return FileResponse(path, headers={
+        "Content-Disposition": f'inline; filename="{filename}"',
+    })
 
 
 @router.delete("/api/transactions/{txn_id}/receipt")
 def delete_receipt(
     txn_id: int,
     session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
 ):
     txn = session.get(Transaction, txn_id)
     if not txn:
         raise HTTPException(404, "Transaction not found")
+    if txn.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     if not txn.receipt_path:
         raise HTTPException(404, "No receipt attached")
 

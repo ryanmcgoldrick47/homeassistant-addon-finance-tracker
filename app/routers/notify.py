@@ -10,8 +10,8 @@ from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
 import json as _json
-from database import Bill, Budget, Transaction, Category, Setting, get_session
-from deps import get_setting
+from database import Bill, Budget, Transaction, Category, Setting, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/notify", tags=["notify"])
 
@@ -55,7 +55,11 @@ class TestBody(BaseModel):
 
 
 @router.post("/test")
-async def test_notification(body: TestBody, session: Session = Depends(get_session)):
+async def test_notification(
+    body: TestBody,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Send a test notification to all configured HA notify targets."""
     ha_url, token, targets = _get_notify_config(session)
     if not token:
@@ -67,11 +71,15 @@ async def test_notification(body: TestBody, session: Session = Depends(get_sessi
 
 
 @router.post("/check")
-async def check_and_notify(session: Session = Depends(get_session)):
+async def check_and_notify(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Evaluate all notification conditions and send HA alerts as needed.
     Call this daily (e.g. from an HA automation or shell cron).
     """
+    user_id = current_user.id
     ha_url, token, targets = _get_notify_config(session)
     today = date.today()
     notifications_sent = []
@@ -83,6 +91,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
     # ── 1. Bills due today or tomorrow ──
     due_soon = session.exec(
         select(Bill).where(
+            Bill.user_id == user_id,
             Bill.is_active == True,
             Bill.next_due != None,
             Bill.next_due >= today,
@@ -108,7 +117,11 @@ async def check_and_notify(session: Session = Depends(get_session)):
     this_month = today.month
     this_year = today.year
     budgets = session.exec(
-        select(Budget).where(Budget.month == this_month, Budget.year == this_year)
+        select(Budget).where(
+            Budget.user_id == user_id,
+            Budget.month == this_month,
+            Budget.year == this_year,
+        )
     ).all()
 
     # Load alert deduplication log (keyed by "month_year_catid_level")
@@ -130,6 +143,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
             continue
         spend = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == False,
                 Transaction.category_id == budget.category_id,
                 func.strftime("%m", Transaction.date) == f"{this_month:02d}",
@@ -197,6 +211,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
                 continue
             spend = float(session.exec(
                 select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                    Transaction.user_id == user_id,
                     Transaction.is_credit == False,
                     Transaction.category_id == budget.category_id,
                     func.strftime("%m", Transaction.date) == f"{this_month:02d}",
@@ -234,6 +249,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
     # ── 4. Flagged transactions needing review ──
     flagged_count = session.exec(
         select(func.count()).where(
+            Transaction.user_id == user_id,
             Transaction.is_flagged == True,
             Transaction.is_reviewed == False,
         )
@@ -249,7 +265,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
         else:
             notifications_sent.append({"type": "flagged", "count": int(flagged_count), "skipped": skipped_reason})
 
-    # ── 4. Monthly summary (send on 1st of month) ──
+    # ── 5. Monthly summary (send on 1st of month) ──
     if today.day == 1:
         # Previous month stats
         if today.month == 1:
@@ -259,6 +275,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
 
         prev_spend = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == False,
                 func.strftime("%m", Transaction.date) == f"{prev_m:02d}",
                 func.strftime("%Y", Transaction.date) == str(prev_y),
@@ -266,6 +283,7 @@ async def check_and_notify(session: Session = Depends(get_session)):
         ).one())
         prev_income = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == user_id,
                 Transaction.is_credit == True,
                 func.strftime("%m", Transaction.date) == f"{prev_m:02d}",
                 func.strftime("%Y", Transaction.date) == str(prev_y),

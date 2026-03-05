@@ -11,8 +11,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import CryptoHolding, CryptoTrade, AcquisitionLot, get_session
-from deps import get_setting
+from database import CryptoHolding, CryptoTrade, AcquisitionLot, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/crypto", tags=["crypto"])
 
@@ -55,9 +55,14 @@ async def _fetch_aud_per_usdt(client: httpx.AsyncClient) -> float:
 
 
 @router.get("")
-def list_crypto(session: Session = Depends(get_session)):
+def list_crypto(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     holdings = session.exec(
-        select(CryptoHolding).order_by(CryptoHolding.value_aud.desc())
+        select(CryptoHolding).where(
+            CryptoHolding.user_id == current_user.id,
+        ).order_by(CryptoHolding.value_aud.desc())
     ).all()
     total = round(sum(h.value_aud for h in holdings), 2)
     synced_at = holdings[0].synced_at if holdings else None
@@ -69,7 +74,10 @@ def list_crypto(session: Session = Depends(get_session)):
 
 
 @router.post("/sync")
-async def sync_binance(session: Session = Depends(get_session)):
+async def sync_binance(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Fetch Binance spot balances + AUD prices, replace all binance-sourced holdings."""
     api_key = get_setting(session, "binance_api_key", "")
     api_secret = get_setting(session, "binance_api_secret", "")
@@ -141,11 +149,15 @@ async def sync_binance(session: Session = Depends(get_session)):
                 value_aud=value_aud,
                 synced_at=now_str,
                 source="binance",
+                user_id=current_user.id,
             ))
 
-    # 4. Replace binance holdings in DB
+    # 4. Replace binance holdings in DB for this user
     old = session.exec(
-        select(CryptoHolding).where(CryptoHolding.source == "binance")
+        select(CryptoHolding).where(
+            CryptoHolding.user_id == current_user.id,
+            CryptoHolding.source == "binance",
+        )
     ).all()
     for h in old:
         session.delete(h)
@@ -169,11 +181,16 @@ class ManualCryptoBody(BaseModel):
 
 
 @router.post("/manual")
-def add_manual_crypto(body: ManualCryptoBody, session: Session = Depends(get_session)):
+def add_manual_crypto(
+    body: ManualCryptoBody,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Add or update a manual crypto holding (not from Binance)."""
-    # Upsert by symbol for manual entries
+    # Upsert by symbol for manual entries per user
     existing = session.exec(
         select(CryptoHolding).where(
+            CryptoHolding.user_id == current_user.id,
             CryptoHolding.symbol == body.symbol.upper(),
             CryptoHolding.source == "manual",
         )
@@ -193,16 +210,23 @@ def add_manual_crypto(body: ManualCryptoBody, session: Session = Depends(get_ses
             value_aud=round(body.qty * body.price_aud, 2),
             synced_at=now_str,
             source="manual",
+            user_id=current_user.id,
         ))
     session.commit()
     return {"ok": True}
 
 
 @router.delete("/{holding_id}")
-def delete_crypto(holding_id: int, session: Session = Depends(get_session)):
+def delete_crypto(
+    holding_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     h = session.get(CryptoHolding, holding_id)
     if not h:
         raise HTTPException(404, "Not found")
+    if h.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(h)
     session.commit()
     return {"ok": True}
@@ -258,11 +282,14 @@ async def _fetch_my_trades(
         return None
 
 
-def _recompute_cost_basis(session: Session, symbol: str, holding: CryptoHolding) -> None:
+def _recompute_cost_basis(session: Session, symbol: str, holding: CryptoHolding, user_id: int) -> None:
     """Recompute weighted avg cost for a symbol from stored CryptoTrades and update holding."""
     trades = session.exec(
         select(CryptoTrade)
-        .where(CryptoTrade.symbol == symbol)
+        .where(
+            CryptoTrade.user_id == user_id,
+            CryptoTrade.symbol == symbol,
+        )
         .order_by(CryptoTrade.trade_time)
     ).all()
 
@@ -294,8 +321,12 @@ def _recompute_cost_basis(session: Session, symbol: str, holding: CryptoHolding)
 # ---------------------------------------------------------------------------
 
 @router.get("/trades")
-def list_trades(symbol: str = "", session: Session = Depends(get_session)):
-    q = select(CryptoTrade).order_by(CryptoTrade.trade_time.desc())
+def list_trades(
+    symbol: str = "",
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    q = select(CryptoTrade).where(CryptoTrade.user_id == current_user.id).order_by(CryptoTrade.trade_time.desc())
     if symbol:
         q = q.where(CryptoTrade.symbol == symbol.upper())
     trades = session.exec(q).all()
@@ -307,7 +338,10 @@ def list_trades(symbol: str = "", session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @router.post("/sync-trades")
-async def sync_binance_trades(session: Session = Depends(get_session)):
+async def sync_binance_trades(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Fetch full trade history from Binance for every held symbol.
     - Stores raw trades in CryptoTrade (idempotent by binance_id).
@@ -320,7 +354,10 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
         raise HTTPException(400, "Binance API key and secret not configured in Settings.")
 
     holdings = session.exec(
-        select(CryptoHolding).where(CryptoHolding.source == "binance")
+        select(CryptoHolding).where(
+            CryptoHolding.user_id == current_user.id,
+            CryptoHolding.source == "binance",
+        )
     ).all()
     if not holdings:
         return {"ok": True, "message": "No Binance holdings found. Run Sync Binance first."}
@@ -368,7 +405,10 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
     trades_stored = 0
     for td in raw_trades:
         if session.exec(
-            select(CryptoTrade).where(CryptoTrade.binance_id == td["binance_id"])
+            select(CryptoTrade).where(
+                CryptoTrade.user_id == current_user.id,
+                CryptoTrade.binance_id == td["binance_id"],
+            )
         ).first():
             continue
         session.add(CryptoTrade(
@@ -382,6 +422,7 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
             price_aud   = td["price_aud"],
             fee_qty     = td["fee_qty"],
             fee_asset   = td["fee_asset"],
+            user_id     = current_user.id,
         ))
         trades_stored += 1
     session.commit()
@@ -393,7 +434,10 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
             continue
         ref = f"binance:{td['binance_id']}"
         if session.exec(
-            select(AcquisitionLot).where(AcquisitionLot.notes == ref)
+            select(AcquisitionLot).where(
+                AcquisitionLot.user_id == current_user.id,
+                AcquisitionLot.notes == ref,
+            )
         ).first():
             continue
         session.add(AcquisitionLot(
@@ -403,6 +447,7 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
             qty               = td["qty"],
             cost_per_unit_aud = td["price_aud"],
             notes             = ref,
+            user_id           = current_user.id,
         ))
         lots_created += 1
     session.commit()
@@ -410,7 +455,7 @@ async def sync_binance_trades(session: Session = Depends(get_session)):
     # 3. Recompute cost basis for each holding
     updated = []
     for holding in holdings:
-        _recompute_cost_basis(session, holding.symbol, holding)
+        _recompute_cost_basis(session, holding.symbol, holding, current_user.id)
         updated.append({
             "symbol":         holding.symbol,
             "avg_cost_aud":   round(holding.avg_cost_aud, 4),

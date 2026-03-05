@@ -6,7 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 from pydantic import BaseModel
 
-from database import get_session, Dividend
+from database import get_session, Dividend, User
+from deps import get_current_user
 
 router = APIRouter()
 
@@ -43,8 +44,12 @@ def _franking_credits(amount_aud: float, franking_pct: float) -> float:
 # ---------------------------------------------------------------------------
 
 @router.get("/api/dividends")
-def list_dividends(ticker: Optional[str] = None, session: Session = Depends(get_session)):
-    q = select(Dividend)
+def list_dividends(
+    ticker: Optional[str] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    q = select(Dividend).where(Dividend.user_id == current_user.id)
     if ticker:
         q = q.where(Dividend.ticker == ticker.upper())
     divs = session.exec(q.order_by(Dividend.pay_date.desc())).all()
@@ -65,7 +70,11 @@ def list_dividends(ticker: Optional[str] = None, session: Session = Depends(get_
 
 
 @router.post("/api/dividends")
-def add_dividend(body: DividendIn, session: Session = Depends(get_session)):
+def add_dividend(
+    body: DividendIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     franking_credits = _franking_credits(body.amount_aud, body.franking_pct)
     div = Dividend(
         ticker=body.ticker.upper(),
@@ -75,6 +84,7 @@ def add_dividend(body: DividendIn, session: Session = Depends(get_session)):
         franking_credits_aud=franking_credits,
         franking_pct=body.franking_pct,
         notes=body.notes,
+        user_id=current_user.id,
     )
     session.add(div)
     session.commit()
@@ -83,10 +93,16 @@ def add_dividend(body: DividendIn, session: Session = Depends(get_session)):
 
 
 @router.delete("/api/dividends/{div_id}")
-def delete_dividend(div_id: int, session: Session = Depends(get_session)):
+def delete_dividend(
+    div_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     d = session.get(Dividend, div_id)
     if not d:
         raise HTTPException(404, "Dividend not found")
+    if d.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(d)
     session.commit()
     return {"ok": True}
@@ -97,7 +113,11 @@ def delete_dividend(div_id: int, session: Session = Depends(get_session)):
 # ---------------------------------------------------------------------------
 
 @router.get("/api/dividends/summary")
-def dividends_summary(fy: int = None, session: Session = Depends(get_session)):
+def dividends_summary(
+    fy: int = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Aggregate dividends for a financial year.
     fy=2025 → FY 2024-25 (1 Jul 2024 – 30 Jun 2025).
@@ -112,6 +132,7 @@ def dividends_summary(fy: int = None, session: Session = Depends(get_session)):
 
     divs = session.exec(
         select(Dividend).where(
+            Dividend.user_id == current_user.id,
             Dividend.pay_date >= fy_start,
             Dividend.pay_date <= fy_end,
         )

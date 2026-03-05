@@ -7,8 +7,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select, func
 
-from database import NetWorthSnapshot, CryptoHolding, ShareHolding, Transaction, get_session
-from deps import get_setting
+from database import NetWorthSnapshot, CryptoHolding, ShareHolding, Transaction, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/networth", tags=["networth"])
 
@@ -37,17 +37,27 @@ def _compute_totals(body: dict) -> dict:
 
 
 @router.get("")
-def list_snapshots(session: Session = Depends(get_session)):
+def list_snapshots(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snaps = session.exec(
-        select(NetWorthSnapshot).order_by(NetWorthSnapshot.snapshot_date.desc())
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.user_id == current_user.id,
+        ).order_by(NetWorthSnapshot.snapshot_date.desc())
     ).all()
     return [s.model_dump() for s in snaps]
 
 
 @router.get("/latest")
-def latest_snapshot(session: Session = Depends(get_session)):
+def latest_snapshot(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snap = session.exec(
-        select(NetWorthSnapshot).order_by(NetWorthSnapshot.snapshot_date.desc())
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.user_id == current_user.id,
+        ).order_by(NetWorthSnapshot.snapshot_date.desc())
     ).first()
     if not snap:
         raise HTTPException(404, "No snapshots yet")
@@ -55,9 +65,14 @@ def latest_snapshot(session: Session = Depends(get_session)):
 
 
 @router.get("/chart")
-def chart_data(session: Session = Depends(get_session)):
+def chart_data(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snaps = session.exec(
-        select(NetWorthSnapshot).order_by(NetWorthSnapshot.snapshot_date.asc())
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.user_id == current_user.id,
+        ).order_by(NetWorthSnapshot.snapshot_date.asc())
     ).all()
     return [
         {
@@ -66,6 +81,8 @@ def chart_data(session: Session = Depends(get_session)):
             "net_worth": s.net_worth,
             "total_assets": s.total_assets,
             "total_liabilities": s.total_liabilities,
+            "shares_value": s.shares_value or 0,
+            "crypto_value": s.crypto_value or 0,
         }
         for s in snaps
     ]
@@ -88,7 +105,11 @@ class SnapshotCreate(BaseModel):
 
 
 @router.post("")
-def create_snapshot(body: SnapshotCreate, session: Session = Depends(get_session)):
+def create_snapshot(
+    body: SnapshotCreate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from datetime import date as _date
     totals = _compute_totals(body.model_dump())
     now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -107,6 +128,7 @@ def create_snapshot(body: SnapshotCreate, session: Session = Depends(get_session
         credit_card=body.credit_card,
         hecs_debt=body.hecs_debt,
         other_liabilities=body.other_liabilities,
+        user_id=current_user.id,
         **totals,
     )
     session.add(snap)
@@ -132,11 +154,18 @@ class SnapshotUpdate(BaseModel):
 
 
 @router.patch("/{snap_id}")
-def update_snapshot(snap_id: int, body: SnapshotUpdate, session: Session = Depends(get_session)):
+def update_snapshot(
+    snap_id: int,
+    body: SnapshotUpdate,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     from datetime import date as _date
     snap = session.get(NetWorthSnapshot, snap_id)
     if not snap:
         raise HTTPException(404, "Not found")
+    if snap.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     data = body.model_dump(exclude_none=True)
     for k, v in data.items():
         if k == "snapshot_date":
@@ -155,17 +184,26 @@ def update_snapshot(snap_id: int, body: SnapshotUpdate, session: Session = Depen
 
 
 @router.delete("/{snap_id}")
-def delete_snapshot(snap_id: int, session: Session = Depends(get_session)):
+def delete_snapshot(
+    snap_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     snap = session.get(NetWorthSnapshot, snap_id)
     if not snap:
         raise HTTPException(404, "Not found")
+    if snap.user_id != current_user.id:
+        raise HTTPException(403, "Access denied")
     session.delete(snap)
     session.commit()
     return {"ok": True}
 
 
 @router.get("/forecast")
-def forecast(session: Session = Depends(get_session)):
+def forecast(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Project net worth at 1, 3, 5, 10 years.
     Uses current NW from latest snapshot + avg monthly net savings + assumed return rate.
@@ -173,7 +211,9 @@ def forecast(session: Session = Depends(get_session)):
     from datetime import date
 
     snap = session.exec(
-        select(NetWorthSnapshot).order_by(NetWorthSnapshot.snapshot_date.desc())
+        select(NetWorthSnapshot).where(
+            NetWorthSnapshot.user_id == current_user.id,
+        ).order_by(NetWorthSnapshot.snapshot_date.desc())
     ).first()
     if not snap:
         return {"error": "No net worth snapshot found. Create one first."}
@@ -191,6 +231,7 @@ def forecast(session: Session = Depends(get_session)):
             y -= 1
         inc = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == current_user.id,
                 Transaction.is_credit == True,
                 func.strftime("%m", Transaction.date) == f"{m:02d}",
                 func.strftime("%Y", Transaction.date) == str(y),
@@ -198,6 +239,7 @@ def forecast(session: Session = Depends(get_session)):
         ).one())
         exp = float(session.exec(
             select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == current_user.id,
                 Transaction.is_credit == False,
                 func.strftime("%m", Transaction.date) == f"{m:02d}",
                 func.strftime("%Y", Transaction.date) == str(y),
@@ -238,10 +280,17 @@ def forecast(session: Session = Depends(get_session)):
 
 
 @router.post("/prefill")
-def prefill_snapshot(session: Session = Depends(get_session)):
+def prefill_snapshot(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Return live crypto + shares totals to pre-fill a new snapshot (does NOT save)."""
-    crypto = session.exec(select(CryptoHolding)).all()
-    shares = session.exec(select(ShareHolding)).all()
+    crypto = session.exec(
+        select(CryptoHolding).where(CryptoHolding.user_id == current_user.id)
+    ).all()
+    shares = session.exec(
+        select(ShareHolding).where(ShareHolding.user_id == current_user.id)
+    ).all()
     crypto_total = round(sum(h.value_aud for h in crypto), 2)
     shares_total = round(sum(h.value_aud for h in shares), 2)
 

@@ -16,6 +16,7 @@ class CategoryCreate(BaseModel):
     icon: str = "mdi:tag"
     is_income: bool = False
     is_tax_relevant: bool = False
+    exclude_from_spend: bool = False
     parent_id: Optional[int] = None
 
 
@@ -25,6 +26,7 @@ class CategoryUpdate(BaseModel):
     icon: Optional[str] = None
     is_income: Optional[bool] = None
     is_tax_relevant: Optional[bool] = None
+    exclude_from_spend: Optional[bool] = None
 
 
 @router.get("")

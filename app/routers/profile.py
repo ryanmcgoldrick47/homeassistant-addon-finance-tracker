@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
+import re
 
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
+import httpx
 
-from database import Transaction, Category, get_session
-from deps import get_setting
+from database import Transaction, Category, get_session, Setting
+from deps import get_setting, set_setting
 
 router = APIRouter(prefix="/api/profile", tags=["profile"])
 
@@ -182,4 +184,125 @@ def benchmarks(fy: int, session: Session = Depends(get_session)):
         "abs_median_savings_rate": abs_savings_median,
         "savings_percentile": _rate_percentile(user_savings_rate, abs_savings_median),
         "categories": categories,
+    }
+
+
+# ---------------------------------------------------------------------------
+# ABS data info + availability check
+# ---------------------------------------------------------------------------
+
+# Metadata about the data currently embedded in the app
+CURRENT_DATA_SOURCES = [
+    {
+        "id": "abs_hes",
+        "name": "ABS Household Expenditure Survey",
+        "short": "ABS HES 2019–20",
+        "version": "2019-20",
+        "published": "2022-09-07",
+        "collection_period": "2019–2020",
+        "coverage": "Weekly household spending by age group, income, gender",
+        "categories_used": ["Groceries", "Dining & Takeaway", "Coffee & Snacks",
+                            "Transport", "Fuel", "Health & Medical", "Pharmacy",
+                            "Entertainment", "Subscriptions", "Shopping & Clothing",
+                            "Personal Care", "Rent / Mortgage", "Utilities", "Home & Garden"],
+        "url": "https://www.abs.gov.au/statistics/economy/finance/household-expenditure-survey-australia-summary-results/2019-20",
+        "next_survey_expected": "2025-26",
+        "notes": "Conducted every ~5–6 years. All figures are household weekly averages in AUD.",
+    },
+    {
+        "id": "abs_income",
+        "name": "ABS Employee Earnings, Hours and Leave (EEHL)",
+        "short": "ABS EEHL 2023",
+        "version": "2023",
+        "published": "2024-02-28",
+        "collection_period": "2023",
+        "coverage": "Median weekly earnings by age group and gender",
+        "categories_used": ["Income benchmarks on Insights page"],
+        "url": "https://www.abs.gov.au/statistics/labour/earnings-and-working-conditions/employee-earnings/latest-release",
+        "next_survey_expected": "2025",
+        "notes": "Published bi-annually.",
+    },
+    {
+        "id": "asfa_super",
+        "name": "ASFA Superannuation Statistics",
+        "short": "ASFA 2023",
+        "version": "2023",
+        "published": "2024-01-01",
+        "collection_period": "2023",
+        "coverage": "Median super balances by age group, ASFA Comfortable retirement target ($595,000)",
+        "categories_used": ["Super tracker page — retirement benchmark"],
+        "url": "https://www.superannuation.asn.au/resources/superannuation-statistics/",
+        "next_survey_expected": "2025",
+        "notes": "Annual publication. Comfortable retirement target reviewed annually.",
+    },
+]
+
+
+@router.get("/data-sources")
+def get_data_sources(session: Session = Depends(get_session)):
+    """Return metadata about the comparison datasets used in the app."""
+    last_checked = get_setting(session, "abs_last_checked", None)
+    last_check_result = get_setting(session, "abs_check_result", None)
+    return {
+        "sources": CURRENT_DATA_SOURCES,
+        "last_checked": last_checked,
+        "last_check_result": last_check_result,
+    }
+
+
+@router.post("/data-sources/check")
+async def check_data_updates(session: Session = Depends(get_session)):
+    """
+    Fetch the ABS HES publications page to check if a newer survey is available.
+    Stores the result in settings and returns a structured update advisory.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    updates_found = []
+    errors = []
+
+    # Check ABS HES page
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
+            r = await client.get(
+                "https://www.abs.gov.au/statistics/economy/finance/"
+                "household-expenditure-survey-australia-summary-results",
+                headers={"User-Agent": "Mozilla/5.0 Finance-Tracker-App/1.0"},
+            )
+            text = r.text
+            # Look for survey years mentioned on the page (e.g. "2022-23", "2023-24")
+            years = re.findall(r'\b(20\d{2})[–\-](20\d{2}|\d{2})\b', text)
+            # Normalise to "YYYY-YY" format and find anything newer than 2019-20
+            newer = []
+            for start, end in years:
+                if int(start) > 2019:
+                    label = f"{start}–{end if len(end)==4 else start[:2]+end}"
+                    if label not in newer:
+                        newer.append(label)
+            if newer:
+                updates_found.append({
+                    "source": "ABS HES",
+                    "current_version": "2019-20",
+                    "available_versions": newer[:3],
+                    "url": "https://www.abs.gov.au/statistics/economy/finance/household-expenditure-survey-australia-summary-results",
+                    "message": f"Newer ABS HES data may be available: {', '.join(newer[:3])}. "
+                               "Review the ABS website and contact your developer to update the comparison figures.",
+                })
+    except Exception as e:
+        errors.append(f"ABS HES check failed: {str(e)[:80]}")
+
+    result_summary = (
+        f"{len(updates_found)} update(s) found" if updates_found
+        else ("Check failed — " + errors[0] if errors else "All data is current")
+    )
+
+    # Persist result
+    set_setting(session, "abs_last_checked", now)
+    set_setting(session, "abs_check_result", result_summary)
+
+    return {
+        "checked_at": now,
+        "updates_found": updates_found,
+        "errors": errors,
+        "summary": result_summary,
+        "up_to_date": len(updates_found) == 0 and len(errors) == 0,
     }

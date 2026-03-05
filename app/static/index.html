@@ -106,6 +106,10 @@
   .nav-item:hover { background: var(--surf2); color: var(--text); }
   .nav-item.active { background: var(--acc-soft); color: var(--accent); }
   .nav-icon { font-size: 16px; width: 20px; text-align: center; flex-shrink: 0; }
+  .sidebar nav::-webkit-scrollbar { width: 4px; }
+  .sidebar nav::-webkit-scrollbar-track { background: transparent; }
+  .sidebar nav::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  .sidebar nav::-webkit-scrollbar-thumb:hover { background: var(--muted); }
 
   /* ── Mobile bottom nav ── */
   .bottom-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; z-index: 40;
@@ -392,26 +396,40 @@
         <!-- Stat cards -->
         <div class="grid grid-4 gap-3" style="margin-bottom:16px;">
           <div class="card-sm" style="cursor:pointer;position:relative;overflow:hidden;" @click="txnFilter.month=dashMonth; txnFilter.year=dashYear; txnFilter.search=''; txnFilter.category_id=''; txnOffset=0; page='transactions'; loadTransactions()">
-            <div x-html="sparklineLineSvg(trendRaw.map(m=>({v:m.spend,label:m.label})))" style="position:absolute;inset:0;pointer-events:none;"></div>
+            <div style="position:absolute;bottom:0;left:0;right:0;height:44px;"
+              @mousemove="onScrub($event, trendRaw.map(m=>({v:m.spend,label:m.label})), 'spend')"
+              @touchmove.prevent="onScrub($event, trendRaw.map(m=>({v:m.spend,label:m.label})), 'spend')"
+              @mouseleave="scrubKey=null" @touchend="scrubKey=null">
+              <div x-html="sparklineSvg(trendRaw.map(m=>({v:m.spend,label:m.label})), '#ef4444')" style="position:absolute;inset:0;pointer-events:none;"></div>
+              <div x-show="scrubKey==='spend'" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(248,113,113,0.5);pointer-events:none;" :style="'left:'+scrubX+'px'"></div>
+            </div>
             <div style="position:relative;z-index:1;">
               <div class="stat-label">Month Spend</div>
               <div class="stat-value amt" style="color:var(--red);" x-text="'$' + fmt(dashboard.month_spend)"></div>
               <div style="margin-top:5px;font-size:11px;display:flex;flex-direction:column;gap:2px;">
-                <span x-show="dashboard.spend_change_pct != null"
+                <span x-show="scrubKey==='spend'" style="color:#f87171;font-size:10px;" x-text="scrubLabel"></span>
+                <span x-show="scrubKey!=='spend' && dashboard.spend_change_pct != null"
                   :style="dashboard.spend_change_pct > 0 ? 'color:var(--red)' : 'color:var(--green)'"
                   x-text="(dashboard.spend_change_pct > 0 ? '↑' : '↓') + Math.abs(dashboard.spend_change_pct) + '% vs last month'"></span>
-                <span x-show="(dashboard.days_elapsed||0) > 0" style="color:var(--muted);"
+                <span x-show="scrubKey!=='spend' && (dashboard.days_elapsed||0) > 0" style="color:var(--muted);"
                   x-text="'Pace: $' + fmt(dashboard.month_spend / dashboard.days_elapsed * dashboard.days_in_month)"></span>
               </div>
             </div>
           </div>
           <div class="card-sm" style="position:relative;overflow:hidden;">
-            <div x-html="sparklineLineSvg(trendRaw.map(m=>({v:m.income,label:m.label})))" style="position:absolute;inset:0;pointer-events:none;"></div>
+            <div style="position:absolute;bottom:0;left:0;right:0;height:44px;"
+              @mousemove="onScrub($event, trendRaw.map(m=>({v:m.income,label:m.label})), 'income')"
+              @touchmove.prevent="onScrub($event, trendRaw.map(m=>({v:m.income,label:m.label})), 'income')"
+              @mouseleave="scrubKey=null" @touchend="scrubKey=null">
+              <div x-html="sparklineSvg(trendRaw.map(m=>({v:m.income,label:m.label})), '#22c55e')" style="position:absolute;inset:0;pointer-events:none;"></div>
+              <div x-show="scrubKey==='income'" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(34,197,94,0.5);pointer-events:none;" :style="'left:'+scrubX+'px'"></div>
+            </div>
             <div style="position:relative;z-index:1;">
               <div class="stat-label">Month Income</div>
               <div class="stat-value amt" style="color:var(--green);" x-text="'$' + fmt(dashboard.month_income)"></div>
               <div style="margin-top:5px;font-size:11px;">
-                <span x-show="dashboard.income_change_pct != null"
+                <span x-show="scrubKey==='income'" style="color:#22c55e;font-size:10px;" x-text="scrubLabel"></span>
+                <span x-show="scrubKey!=='income' && dashboard.income_change_pct != null"
                   :style="dashboard.income_change_pct > 0 ? 'color:var(--green)' : 'color:var(--red)'"
                   x-text="(dashboard.income_change_pct > 0 ? '↑' : '↓') + Math.abs(dashboard.income_change_pct) + '% vs last month'"></span>
               </div>
@@ -430,15 +448,23 @@
             </div>
           </div>
           <div class="card-sm" style="position:relative;overflow:hidden;">
-            <div x-html="sparklineLineSvg(trendRaw.map(m=>({v:m.income-m.spend,label:m.label})))" style="position:absolute;inset:0;pointer-events:none;"></div>
+            <div style="position:absolute;bottom:0;left:0;right:0;height:44px;"
+              @mousemove="onScrub($event, trendRaw.map(m=>({v:m.income-m.spend,label:m.label})), 'net')"
+              @touchmove.prevent="onScrub($event, trendRaw.map(m=>({v:m.income-m.spend,label:m.label})), 'net')"
+              @mouseleave="scrubKey=null" @touchend="scrubKey=null">
+              <div x-html="sparklineSvg(trendRaw.map(m=>({v:m.income-m.spend,label:m.label})), (dashboard.net||0)>=0?'#22c55e':'#ef4444')" style="position:absolute;inset:0;pointer-events:none;"></div>
+              <div x-show="scrubKey==='net'" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(56,189,248,0.5);pointer-events:none;" :style="'left:'+scrubX+'px'"></div>
+            </div>
             <div style="position:relative;z-index:1;">
               <div class="stat-label">Net</div>
               <div class="stat-value amt"
                 :style="(dashboard.net||0) >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
                 x-text="((dashboard.net||0) >= 0 ? '+' : '') + '$' + fmt(Math.abs(dashboard.net || 0))"></div>
-              <div style="margin-top:5px;font-size:11px;color:var(--muted);"
-                x-show="(dashboard.month_income||0) > 0"
-                x-text="Math.round((dashboard.net||0) / dashboard.month_income * 100) + '% saved'"></div>
+              <div style="margin-top:5px;font-size:11px;">
+                <span x-show="scrubKey==='net'" style="color:var(--accent);font-size:10px;" x-text="scrubLabel"></span>
+                <span x-show="scrubKey!=='net' && (dashboard.month_income||0) > 0" style="color:var(--muted);"
+                  x-text="Math.round((dashboard.net||0) / dashboard.month_income * 100) + '% saved'"></span>
+              </div>
             </div>
           </div>
           <div class="card-sm">
@@ -500,8 +526,14 @@
         <!-- Net Worth + Portfolio widgets (with sparkline / trend) -->
         <div class="grid grid-2 gap-3" style="margin-bottom:16px;">
           <div class="card-sm" style="cursor:pointer;position:relative;overflow:hidden;" @click="page='networth'">
-            <!-- Background sparkline -->
-            <div x-html="sparklineSvg(dashNwChartRaw.map(s=>({v:s.net_worth,label:s.date})), dashNwTrend>=0?'#22c55e':'#ef4444')" style="position:absolute;inset:0;pointer-events:none;"></div>
+            <!-- Background sparkline - interactive -->
+            <div style="position:absolute;bottom:0;left:0;right:0;height:44px;"
+              @mousemove.stop="onScrub($event, dashNwChartRaw.map(s=>({v:s.net_worth,label:s.date})), 'nw')"
+              @touchmove.prevent.stop="onScrub($event, dashNwChartRaw.map(s=>({v:s.net_worth,label:s.date})), 'nw')"
+              @mouseleave="scrubKey=null" @touchend="scrubKey=null">
+              <div x-html="sparklineSvg(dashNwChartRaw.map(s=>({v:s.net_worth,label:s.date})), dashNwTrend>=0?'#22c55e':'#ef4444')" style="position:absolute;inset:0;pointer-events:none;"></div>
+              <div x-show="scrubKey==='nw'" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(255,255,255,0.4);pointer-events:none;" :style="'left:'+scrubX+'px'"></div>
+            </div>
             <div style="position:relative;z-index:1;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                 <div style="flex:1;min-width:0;">
@@ -518,15 +550,22 @@
                     x-text="dashNwTrend >= 0 ? '▲ ' + fmt(dashNwTrend) : '▼ ' + fmt(Math.abs(dashNwTrend))"></span>
                 </div>
               </div>
-              <div x-show="dashNetWorth" style="display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--muted);">
-                <span x-text="'Assets $' + fmt(dashNetWorth?.total_assets||0)"></span>
-                <span x-text="'Liab $' + fmt(dashNetWorth?.total_liabilities||0)"></span>
+              <div x-show="dashNetWorth" style="display:flex;gap:14px;margin-top:6px;font-size:11px;">
+                <span x-show="scrubKey==='nw'" style="color:var(--accent);" x-text="scrubLabel"></span>
+                <span x-show="scrubKey!=='nw'" style="color:var(--muted);" x-text="'Assets $' + fmt(dashNetWorth?.total_assets||0)"></span>
+                <span x-show="scrubKey!=='nw'" style="color:var(--muted);" x-text="'Liab $' + fmt(dashNetWorth?.total_liabilities||0)"></span>
               </div>
             </div>
           </div>
           <div class="card-sm" style="cursor:pointer;position:relative;overflow:hidden;" @click="page='investments'">
-            <!-- Background sparkline (shares + crypto) -->
-            <div x-html="sparklineSvg(dashNwChartRaw.map(s=>({v:(s.shares_value||0)+(s.crypto_value||0),label:s.date})), '#38bdf8')" style="position:absolute;inset:0;pointer-events:none;"></div>
+            <!-- Background sparkline (shares + crypto) - interactive -->
+            <div style="position:absolute;bottom:0;left:0;right:0;height:44px;"
+              @mousemove.stop="onScrub($event, dashNwChartRaw.map(s=>({v:(s.shares_value||0)+(s.crypto_value||0),label:s.date})), 'portfolio')"
+              @touchmove.prevent.stop="onScrub($event, dashNwChartRaw.map(s=>({v:(s.shares_value||0)+(s.crypto_value||0),label:s.date})), 'portfolio')"
+              @mouseleave="scrubKey=null" @touchend="scrubKey=null">
+              <div x-html="sparklineSvg(dashNwChartRaw.map(s=>({v:(s.shares_value||0)+(s.crypto_value||0),label:s.date})), '#38bdf8')" style="position:absolute;inset:0;pointer-events:none;"></div>
+              <div x-show="scrubKey==='portfolio'" style="position:absolute;top:0;bottom:0;width:1px;background:rgba(56,189,248,0.5);pointer-events:none;" :style="'left:'+scrubX+'px'"></div>
+            </div>
             <div style="position:relative;z-index:1;">
               <div style="display:flex;justify-content:space-between;align-items:flex-start;">
                 <div style="flex:1;min-width:0;">
@@ -541,9 +580,10 @@
                     x-text="(dashInvestments?.total_gain_aud||0)>=0 ? '▲ ' + (dashInvestments?.total_gain_pct||0).toFixed(1)+'%' : '▼ ' + Math.abs(dashInvestments?.total_gain_pct||0).toFixed(1)+'%'"></span>
                 </div>
               </div>
-              <div style="display:flex;gap:14px;margin-top:6px;font-size:11px;color:var(--muted);">
-                <span x-text="'Shares $' + fmt(dashInvestments?.total_value_aud||0)"></span>
-                <span x-text="'Crypto $' + fmt(dashCryptoTotal)"></span>
+              <div style="display:flex;gap:14px;margin-top:6px;font-size:11px;">
+                <span x-show="scrubKey==='portfolio'" style="color:var(--accent);" x-text="scrubLabel"></span>
+                <span x-show="scrubKey!=='portfolio'" style="color:var(--muted);" x-text="'Shares $' + fmt(dashInvestments?.total_value_aud||0)"></span>
+                <span x-show="scrubKey!=='portfolio'" style="color:var(--muted);" x-text="'Crypto $' + fmt(dashCryptoTotal)"></span>
               </div>
               <div style="font-size:11px;margin-top:3px;"
                 x-show="dashSuperBalance > 0"
@@ -752,11 +792,15 @@
         <!-- Row 3: Budget Progress + 6 Month Trend -->
         <div class="grid grid-2 gap-4">
           <div class="card">
-            <div class="section-title">Budget Progress</div>
-            <div style="display:flex;flex-direction:column;gap:12px;">
-              <template x-for="b in budgetVsSpend" :key="b.id">
-                <div>
-                  <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+              <div class="section-title" style="margin:0;">Budget Progress</div>
+              <button @click="page='budget'" style="font-size:11px;color:var(--muted);background:none;border:none;cursor:pointer;padding:0;">View all →</button>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <template x-for="b in budgetVsSpend.filter(b=>b.spend>0).sort((a,z)=>z.pct-a.pct).slice(0,8)" :key="b.id">
+                <div @click="openBudgetDrill(b)" style="cursor:pointer;border-radius:8px;padding:6px 8px;margin:-6px -8px;transition:background .15s;"
+                  @mouseenter="$el.style.background='var(--surf2)'" @mouseleave="$el.style.background='transparent'">
+                  <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px;">
                     <span x-text="b.category_name"></span>
                     <span style="color:var(--muted);" x-text="'$' + fmt(b.spend) + ' / $' + fmt(b.budget)"></span>
                   </div>
@@ -767,10 +811,11 @@
                   </div>
                 </div>
               </template>
-              <p x-show="budgetVsSpend.length === 0" style="font-size:13px;color:var(--muted);">No budgets set.</p>
+              <p x-show="budgetVsSpend.filter(b=>b.spend>0).length === 0" style="font-size:13px;color:var(--muted);">No spend this month.</p>
+              <p x-show="budgetVsSpend.filter(b=>b.spend>0).length > 8" style="font-size:11px;color:var(--muted);text-align:center;margin:0;" x-text="'+ ' + (budgetVsSpend.filter(b=>b.spend>0).length - 8) + ' more'"></p>
             </div>
           </div>
-          <div class="card">
+          <div class="card" style="display:flex;flex-direction:column;">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
               <div class="section-title" style="margin:0;">Trend</div>
               <div style="display:flex;gap:10px;font-size:11px;color:var(--muted);align-items:center;flex-wrap:wrap;">
@@ -813,6 +858,19 @@
                 </div>
               </template>
               <p x-show="!trendChartData.length" style="font-size:13px;color:var(--muted);margin:0;">No trend data.</p>
+            </div>
+            <!-- Top spend categories — fills remaining height -->
+            <div x-show="Object.keys(dashboard.by_category||{}).length > 0"
+              style="flex:1;border-top:1px solid var(--border);margin-top:14px;padding-top:12px;">
+              <div style="font-size:10px;font-weight:600;letter-spacing:.06em;color:var(--muted);text-transform:uppercase;margin-bottom:8px;">This Month's Top Spend</div>
+              <div style="display:flex;flex-direction:column;gap:8px;">
+                <template x-for="[name,amt] in Object.entries(dashboard.by_category||{}).sort((a,b)=>b[1]-a[1]).slice(0,6)" :key="name">
+                  <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;">
+                    <span style="color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:65%;" x-text="name"></span>
+                    <span style="color:var(--red);font-weight:500;flex-shrink:0;" x-text="'$' + fmt(amt)"></span>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
         </div>
@@ -1104,9 +1162,21 @@
               <tbody>
                 <template x-for="(m, i) in merchants" :key="m.name">
                   <tr>
-                    <td style="color:var(--muted);font-size:12px;" x-text="i+1"></td>
-                    <td style="max-width:240px;">
-                      <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;" x-text="m.name"></span>
+                    <td style="color:var(--muted);font-size:12px;width:28px;" x-text="i+1"></td>
+                    <td style="max-width:260px;">
+                      <div style="display:flex;align-items:center;gap:10px;">
+                        <div style="width:32px;height:32px;border-radius:8px;overflow:hidden;flex-shrink:0;background:var(--surf2);display:flex;align-items:center;justify-content:center;">
+                          <template x-if="m.logo_url">
+                            <img :src="m.logo_url" style="width:32px;height:32px;object-fit:cover;" @error="$el.style.display='none'" />
+                          </template>
+                          <span x-show="!m.logo_url" style="font-size:13px;font-weight:600;color:var(--muted);"
+                            x-text="(m.clean_name||m.name||'?')[0].toUpperCase()"></span>
+                        </div>
+                        <div style="min-width:0;">
+                          <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500;" x-text="m.clean_name || m.name"></div>
+                          <div x-show="m.clean_name && m.clean_name !== m.name" style="font-size:10px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="m.name"></div>
+                        </div>
+                      </div>
                     </td>
                     <td>
                       <span class="badge" :style="`background:${m.category_colour}22; color:${m.category_colour}`"
@@ -1114,8 +1184,7 @@
                     </td>
                     <td style="text-align:right;color:var(--muted);" x-text="m.count"></td>
                     <td style="text-align:right;" class="amt" x-text="'$' + fmt(m.avg)"></td>
-                    <td style="text-align:right;" class="amt" style="color:var(--red);" x-text="'$' + fmt(m.total)">
-                    </td>
+                    <td style="text-align:right;color:var(--red);" class="amt" x-text="'$' + fmt(m.total)"></td>
                   </tr>
                 </template>
                 <tr x-show="merchants.length === 0">
@@ -1128,9 +1197,18 @@
           <div class="hide-desktop" style="display:flex;flex-direction:column;gap:0;">
             <template x-for="(m, i) in merchants" :key="m.name">
               <div style="display:flex;align-items:center;gap:12px;padding:12px 16px;border-bottom:1px solid rgba(26,48,78,.5);">
-                <div style="width:28px;height:28px;border-radius:8px;background:var(--surf2);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--muted);flex-shrink:0;" x-text="i+1"></div>
+                <div style="position:relative;width:36px;height:36px;flex-shrink:0;">
+                  <div style="width:36px;height:36px;border-radius:10px;overflow:hidden;background:var(--surf2);display:flex;align-items:center;justify-content:center;">
+                    <template x-if="m.logo_url">
+                      <img :src="m.logo_url" style="width:36px;height:36px;object-fit:cover;" @error="$el.style.display='none'" />
+                    </template>
+                    <span x-show="!m.logo_url" style="font-size:14px;font-weight:700;color:var(--muted);"
+                      x-text="(m.clean_name||m.name||'?')[0].toUpperCase()"></span>
+                  </div>
+                  <div style="position:absolute;bottom:-4px;right:-4px;width:16px;height:16px;border-radius:50%;background:var(--bg);display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:700;color:var(--muted);" x-text="i+1"></div>
+                </div>
                 <div style="flex:1;min-width:0;">
-                  <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="m.name"></div>
+                  <div style="font-size:14px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="m.clean_name || m.name"></div>
                   <div style="font-size:11px;color:var(--muted);margin-top:2px;">
                     <span class="badge" :style="`background:${m.category_colour}22; color:${m.category_colour}`"
                       x-text="m.category_name"></span>
@@ -1527,6 +1605,7 @@
                     <span style="font-size:14px;" x-text="c.name"></span>
                     <span x-show="c.is_income" class="badge badge-green">income</span>
                     <span x-show="c.is_tax_relevant" class="badge badge-amber">tax</span>
+                    <span x-show="c.exclude_from_spend" class="badge" style="background:#1e3a5f;color:#93c5fd;">transfer</span>
                   </div>
                   <button @click="deleteCategory(c.id)"
                     style="font-size:12px;color:var(--muted);background:none;border:none;cursor:pointer;
@@ -1557,6 +1636,11 @@
                 <input type="checkbox" x-model="newCat.is_tax_relevant"
                   style="width:16px;height:16px;accent-color:var(--accent);" />
                 Tax relevant (ATO deductible)
+              </label>
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" x-model="newCat.exclude_from_spend"
+                  style="width:16px;height:16px;accent-color:var(--accent);" />
+                Exclude from personal spend (use for transfers, CC payments)
               </label>
               <button @click="addCategory()" class="btn btn-primary">Add Category</button>
             </div>
@@ -1635,7 +1719,7 @@
                 </thead>
                 <tbody>
                   <template x-for="b in budgetVsSpend" :key="b.id">
-                    <tr>
+                    <tr @click="openBudgetDrill(b)" style="cursor:pointer;" class="hoverable-row">
                       <td>
                         <div style="display:flex;align-items:center;gap:8px;">
                           <span style="width:8px;height:8px;border-radius:50%;"
@@ -1686,7 +1770,7 @@
                         <span x-else style="color:var(--muted);font-size:12px;">—</span>
                       </td>
                       <td>
-                        <button @click="deleteBudget(b.id)" class="btn btn-danger btn-sm">✕</button>
+                        <button @click.stop="deleteBudget(b.id)" class="btn btn-danger btn-sm">✕</button>
                       </td>
                     </tr>
                   </template>
@@ -2305,10 +2389,22 @@
 
             <!-- All bills -->
             <div class="card" style="padding:0;overflow:hidden;">
-              <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+              <div style="padding:16px 18px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
                 <div class="section-title" style="margin-bottom:0;">All Bills</div>
-                <span style="font-size:12px;color:var(--muted);"
-                  x-text="bills.length ? 'Annual total: $' + fmt(bills.reduce((s,b) => s + (b.annual_cost||0), 0)) : ''"></span>
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                  <span style="font-size:12px;color:var(--muted);"
+                    x-text="bills.length ? 'Annual total: $' + fmt(bills.reduce((s,b) => s + (b.annual_cost||0), 0)) : ''"></span>
+                  <button @click="predictBillDueDates()" :disabled="billPredictLoading"
+                    class="btn btn-ghost btn-sm" style="font-size:11px;">
+                    <span x-show="!billPredictLoading">🔮 Predict Due Dates</span>
+                    <span x-show="billPredictLoading">Predicting…</span>
+                  </button>
+                  <button x-show="billPredictions.length > 0"
+                    @click="applyAllBillPredictions()"
+                    class="btn btn-primary btn-sm" style="font-size:11px;">
+                    Apply All (<span x-text="billPredictions.length"></span>)
+                  </button>
+                </div>
               </div>
               <div class="tbl-wrap">
                 <table>
@@ -2334,7 +2430,26 @@
                           </div>
                         </td>
                         <td style="color:var(--muted);text-transform:capitalize;" x-text="b.frequency"></td>
-                        <td style="color:var(--muted);" x-text="b.next_due || '—'"></td>
+                        <td>
+                          <template x-if="b.next_due">
+                            <span style="color:var(--muted);" x-text="b.next_due"></span>
+                          </template>
+                          <template x-if="!b.next_due && billPredictions.find(p=>p.bill_id===b.id)">
+                            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                              <span style="color:var(--muted);font-style:italic;font-size:12px;"
+                                x-text="billPredictions.find(p=>p.bill_id===b.id)?.predicted_next_due"></span>
+                              <span class="badge"
+                                :class="billPredictions.find(p=>p.bill_id===b.id)?.confidence >= 0.8 ? 'badge-green' : billPredictions.find(p=>p.bill_id===b.id)?.confidence >= 0.5 ? 'badge-amber' : ''"
+                                style="font-size:9px;"
+                                x-text="Math.round((billPredictions.find(p=>p.bill_id===b.id)?.confidence||0)*100) + '% conf'"></span>
+                              <button @click="applyBillPrediction(billPredictions.find(p=>p.bill_id===b.id))"
+                                class="btn btn-ghost btn-sm" style="font-size:10px;padding:2px 6px;">Apply</button>
+                            </div>
+                          </template>
+                          <template x-if="!b.next_due && !billPredictions.find(p=>p.bill_id===b.id)">
+                            <span style="color:var(--muted);">—</span>
+                          </template>
+                        </td>
                         <td style="text-align:right;" class="amt" x-text="'$' + fmt(b.amount)"></td>
                         <td style="text-align:right;color:var(--muted);" class="hide-mobile"
                           x-text="'$' + fmt(b.annual_cost || 0)"></td>
@@ -3279,7 +3394,7 @@
             @click="investFilter = { search: '', broker: '' }" class="btn btn-ghost btn-sm">Clear</button>
           <span x-show="investments.length !== filteredInvestments.length"
             style="font-size:12px;color:var(--muted);"
-            x-text="filteredInvestments.length + ' of ' + investments.length"></span>
+            x-text="groupedInvestments.length + ' of ' + investments.length + ' holdings'"></span>
         </div>
 
         <div class="card" style="padding:0;overflow:hidden;">
@@ -3287,6 +3402,7 @@
             <table>
               <thead>
                 <tr>
+                  <th style="width:28px;"></th>
                   <th>Ticker</th>
                   <th class="hide-mobile">Name</th>
                   <th style="text-align:right;">Qty</th>
@@ -3298,26 +3414,61 @@
                   <th></th>
                 </tr>
               </thead>
-              <tbody>
-                <template x-for="h in filteredInvestments" :key="h.id">
-                  <tr>
-                    <td style="font-weight:600;" x-text="h.ticker"></td>
-                    <td style="color:var(--muted);font-size:12px;" class="hide-mobile" x-text="h.name || '—'"></td>
-                    <td style="text-align:right;color:var(--muted);font-size:13px;" x-text="h.qty"></td>
-                    <td style="text-align:right;color:var(--muted);" class="amt hide-mobile" x-text="'$' + fmt(h.avg_cost_aud)"></td>
-                    <td style="text-align:right;" class="amt" x-text="h.price_aud > 0 ? '$' + fmt(h.price_aud) : '—'"></td>
-                    <td style="text-align:right;font-weight:600;" class="amt" x-text="h.value_aud > 0 ? '$' + fmt(h.value_aud) : '—'"></td>
-                    <td style="text-align:right;font-size:13px;" :style="h.gain_aud >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
-                      x-text="h.price_aud > 0 ? (h.gain_aud >= 0 ? '+' : '') + '$' + fmt(Math.abs(h.gain_aud)) + ' (' + (h.gain_pct >= 0 ? '+' : '') + h.gain_pct.toFixed(1) + '%)' : '—'"></td>
-                    <td style="color:var(--muted);font-size:12px;text-transform:capitalize;" class="hide-mobile" x-text="h.broker"></td>
-                    <td><button @click="deleteHolding(h.id)" class="btn btn-danger btn-sm">✕</button></td>
+                <template x-for="g in groupedInvestments" :key="g.ticker">
+                  <tbody>
+                  <!-- Grouped summary row -->
+                  <tr :style="expandedTickers[g.ticker] ? 'background:var(--surf2);' : ''">
+                    <td style="padding-left:10px;width:28px;">
+                      <template x-if="g.holdings.length > 1">
+                        <button @click="expandedTickers[g.ticker] = !expandedTickers[g.ticker]"
+                          style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:14px;padding:2px 4px;transition:transform .2s;line-height:1;display:block;"
+                          :style="expandedTickers[g.ticker] ? 'transform:rotate(90deg);color:var(--accent);' : ''"
+                          title="Show individual purchases">›</button>
+                      </template>
+                    </td>
+                    <td style="font-weight:600;" x-text="g.ticker"></td>
+                    <td style="color:var(--muted);font-size:12px;" class="hide-mobile" x-text="g.name || '—'"></td>
+                    <td style="text-align:right;color:var(--muted);font-size:13px;" x-text="g.total_qty % 1 === 0 ? g.total_qty : g.total_qty.toFixed(4)"></td>
+                    <td style="text-align:right;color:var(--muted);" class="amt hide-mobile" x-text="'$' + fmt(g.avg_cost_aud)"></td>
+                    <td style="text-align:right;" class="amt" x-text="g.price_aud > 0 ? '$' + fmt(g.price_aud) : '—'"></td>
+                    <td style="text-align:right;font-weight:600;" class="amt" x-text="g.total_value > 0 ? '$' + fmt(g.total_value) : '—'"></td>
+                    <td style="text-align:right;font-size:13px;" :style="g.gain_aud >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                      x-text="g.price_aud > 0 ? (g.gain_aud >= 0 ? '+' : '') + '$' + fmt(Math.abs(g.gain_aud)) + ' (' + (g.gain_pct >= 0 ? '+' : '') + g.gain_pct.toFixed(1) + '%)' : '—'"></td>
+                    <td style="color:var(--muted);font-size:12px;text-transform:capitalize;" class="hide-mobile" x-text="g.holdings.length > 1 ? g.broker + ' ×' + g.holdings.length : g.broker"></td>
+                    <td>
+                      <template x-if="g.holdings.length === 1">
+                        <button @click="deleteHolding(g.holdings[0].id)" class="btn btn-danger btn-sm">✕</button>
+                      </template>
+                    </td>
                   </tr>
+                  <!-- Expanded individual purchase sub-rows (x-show avoids x-if nesting issues) -->
+                  <template x-for="(h, hidx) in g.holdings" :key="'sub-'+h.id">
+                    <tr x-show="expandedTickers[g.ticker] && g.holdings.length > 1"
+                      style="background:rgba(255,255,255,0.02);">
+                      <td style="border-top:1px solid var(--border);padding:0;"></td>
+                      <td style="font-size:12px;color:var(--muted);padding-left:20px;border-top:1px solid var(--border);">
+                        <span style="font-size:10px;color:var(--border);margin-right:4px;">└</span>
+                        <span x-text="(h.purchase_date ? h.purchase_date + ' · ' : '') + (h.notes || ('lot ' + (hidx + 1)))"></span>
+                      </td>
+                      <td class="hide-mobile" style="border-top:1px solid var(--border);"></td>
+                      <td style="text-align:right;color:var(--muted);font-size:12px;border-top:1px solid var(--border);" x-text="h.qty"></td>
+                      <td style="text-align:right;color:var(--muted);font-size:12px;border-top:1px solid var(--border);" class="amt hide-mobile" x-text="'$' + fmt(h.avg_cost_aud)"></td>
+                      <td style="border-top:1px solid var(--border);"></td>
+                      <td style="text-align:right;font-size:12px;color:var(--muted);border-top:1px solid var(--border);" class="amt" x-text="h.value_aud > 0 ? '$' + fmt(h.value_aud) : '—'"></td>
+                      <td style="text-align:right;font-size:12px;border-top:1px solid var(--border);" :style="h.gain_aud >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                        x-text="h.price_aud > 0 ? (h.gain_aud >= 0 ? '+' : '') + '$' + fmt(Math.abs(h.gain_aud)) + ' (' + (h.gain_pct >= 0 ? '+' : '') + h.gain_pct.toFixed(1) + '%)' : '—'"></td>
+                      <td class="hide-mobile" style="border-top:1px solid var(--border);"></td>
+                      <td style="border-top:1px solid var(--border);"><button @click="deleteHolding(h.id)" class="btn btn-danger btn-sm">✕</button></td>
+                    </tr>
+                  </template>
+                  </tbody>
                 </template>
-                <tr x-show="filteredInvestments.length === 0">
-                  <td colspan="9" style="text-align:center;color:var(--muted);padding:32px;"
-                    x-text="investments.length === 0 ? 'No holdings yet. Add one above.' : 'No holdings match the filter.'"></td>
-                </tr>
-              </tbody>
+                <tbody>
+                  <tr x-show="groupedInvestments.length === 0">
+                    <td colspan="10" style="text-align:center;color:var(--muted);padding:32px;"
+                      x-text="investments.length === 0 ? 'No holdings yet. Add one above.' : 'No holdings match the filter.'"></td>
+                  </tr>
+                </tbody>
             </table>
           </div>
         </div>
@@ -4320,6 +4471,14 @@
 
       <!-- ═══════════ SETTINGS ═══════════ -->
       <div x-show="page === 'settings'" x-cloak>
+        <!-- Sticky settings toolbar -->
+        <div style="position:sticky;top:0;z-index:20;background:var(--bg);padding:10px 0 10px;margin-bottom:8px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+          <div style="font-size:16px;font-weight:700;color:var(--text);">Settings</div>
+          <div style="display:flex;align-items:center;gap:10px;">
+            <span x-show="settingsSaved" style="font-size:12px;color:var(--green);">✓ Saved</span>
+            <button @click="saveSettings()" class="btn btn-primary btn-sm">Save Settings</button>
+          </div>
+        </div>
         <div style="max-width:560px;display:flex;flex-direction:column;gap:16px;">
           <div class="card">
             <div class="section-title">AI Categorisation</div>
@@ -4965,6 +5124,338 @@
         </div>
       </div>
 
+
+      <!-- ═══ CHAT HISTORY PAGE ═══ -->
+      <div x-show="page === 'chathistory'" x-cloak>
+        <div style="max-width:760px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <div style="font-size:22px;font-weight:700;">💬 Chat History</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:2px;">Your previous conversations with the Finance Assistant</div>
+            </div>
+            <button @click="newChat(); chatOpen=true" class="btn btn-primary btn-sm">+ New Chat</button>
+          </div>
+      
+          <!-- Search bar -->
+          <div style="margin-bottom:16px;position:relative;">
+            <input type="text" x-model="chatHistorySearch"
+              @input.debounce.400ms="loadChatConversations()"
+              placeholder="Search conversations…"
+              style="width:100%;padding:10px 14px 10px 38px;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--text);font-size:13px;" />
+            <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;">🔍</span>
+          </div>
+      
+          <!-- Conversation list -->
+          <div x-show="chatConversations.length === 0 && !chatHistorySearch"
+            style="text-align:center;padding:48px 24px;color:var(--muted);">
+            <div style="font-size:36px;margin-bottom:12px;">💬</div>
+            <div style="font-size:15px;margin-bottom:6px;">No conversations yet</div>
+            <div style="font-size:13px;">Open the chat assistant and start asking questions about your finances.</div>
+          </div>
+          <div x-show="chatConversations.length === 0 && chatHistorySearch"
+            style="text-align:center;padding:48px 24px;color:var(--muted);">
+            No conversations match "<span x-text="chatHistorySearch"></span>"
+          </div>
+      
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <template x-for="conv in chatConversations" :key="conv.id">
+              <div class="card" style="cursor:pointer;padding:16px 18px;transition:border-color 0.15s;"
+                @click="openConversation(conv)"
+                @mouseenter="$el.style.borderColor='var(--accent)'"
+                @mouseleave="$el.style.borderColor='var(--border)'">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
+                  <div style="min-width:0;flex:1;">
+                    <div style="font-weight:600;font-size:14px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
+                      x-text="conv.title || 'Untitled conversation'"></div>
+                    <div x-show="conv.preview" style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"
+                      x-text="conv.preview"></div>
+                    <div style="display:flex;gap:12px;font-size:11px;color:var(--muted);">
+                      <span x-text="new Date(conv.updated_at).toLocaleDateString('en-AU', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})"></span>
+                      <span x-text="(conv.message_count || 0) + ' messages'"></span>
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:6px;flex-shrink:0;">
+                    <button @click.stop="openConversation(conv)" class="btn btn-ghost btn-sm" style="font-size:11px;">Open</button>
+                    <button @click.stop="deleteConversation(conv.id)" class="btn btn-ghost btn-sm"
+                      style="font-size:11px;color:var(--red);" title="Delete conversation">🗑</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ FINANCE PET PAGE ═══ -->
+      <div x-show="page === 'pet'" x-cloak>
+        <div style="max-width:480px;margin:0 auto;padding-bottom:32px;">
+      
+          <!-- Header -->
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
+            <div>
+              <div style="font-size:22px;font-weight:700;">🐾 Finance Pet</div>
+              <div style="font-size:12px;color:var(--muted);" x-text="'Level ' + petLevel + ' · Finance Score ' + (petState.happiness) + '/100'"></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <input x-show="petRenaming" x-ref="petNameInput" type="text" x-model="petName" maxlength="20"
+                @keydown.enter="savePetName()" @keydown.escape="petRenaming=false"
+                style="width:120px;padding:5px 10px;font-size:14px;" placeholder="Name..."/>
+              <button x-show="petRenaming" @click="savePetName()" class="btn btn-primary btn-sm">Save</button>
+              <button x-show="!petRenaming" @click="petRenaming=true; $nextTick(()=>$refs.petNameInput?.focus())"
+                class="btn btn-ghost btn-sm" title="Rename pet">✏️</button>
+            </div>
+          </div>
+      
+          <!-- Character card -->
+          <div class="card" style="text-align:center;margin-bottom:16px;padding:28px 16px 20px;position:relative;overflow:hidden;">
+            <!-- Mood background glow -->
+            <div :style="`position:absolute;inset:0;background:radial-gradient(ellipse at 50% 65%, ${petBgGlow} 0%, transparent 70%);pointer-events:none;`"></div>
+      
+            <!-- Pet name + level label -->
+            <div style="position:relative;z-index:1;">
+              <div style="font-size:20px;font-weight:700;" x-text="petName"></div>
+              <div style="font-size:12px;color:var(--muted);margin-bottom:16px;" x-text="petLevelLabel"></div>
+            </div>
+      
+            <!-- SVG Character "Zeus Jnr" — black & white dog -->
+            <div style="position:relative;z-index:1;display:inline-block;">
+              <svg viewBox="0 0 200 220" width="190" height="209" :class="petTreatActive ? 'pet-treat' : petAnimClass" style="overflow:visible;display:block;">
+                <!-- Shadow -->
+                <ellipse cx="100" cy="213" rx="50" ry="6" fill="rgba(0,0,0,0.12)"/>
+      
+                <!-- Tail (mood-driven, right side of body) -->
+                <g x-show="petMood==='happy'||petMood==='excited'">
+                  <path d="M 144 148 C 172 126 178 100 164 88" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
+                </g>
+                <g x-show="petMood==='neutral'">
+                  <path d="M 146 160 Q 173 156 178 148" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
+                </g>
+                <g x-show="petMood==='worried'||petMood==='sick'||petMood==='sleeping'">
+                  <path d="M 144 170 Q 164 188 158 202" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
+                </g>
+      
+                <!-- Floppy ears (behind head, drawn first) -->
+                <ellipse cx="56" cy="104" rx="17" ry="30" fill="#1A1A1A" transform="rotate(-8,56,104)"/>
+                <ellipse cx="144" cy="104" rx="17" ry="30" fill="#1A1A1A" transform="rotate(8,144,104)"/>
+      
+                <!-- Body -->
+                <circle cx="100" cy="161" r="48" :style="'fill:'+petBodyColor"/>
+                <!-- Body black patch (upper-right) -->
+                <ellipse cx="126" cy="144" rx="22" ry="18" fill="#1A1A1A" opacity="0.85"/>
+                <!-- Belly (lighter) -->
+                <ellipse cx="88" cy="174" rx="26" ry="22" :style="'fill:'+petBellyColor"/>
+      
+                <!-- Level 3 badge: star on chest -->
+                <g x-show="petLevel >= 3 && petLevel < 4">
+                  <polygon points="100,178 104,188 115,188 107,195 110,205 100,199 90,205 93,195 85,188 96,188"
+                    fill="#FFD700" stroke="#E6AC00" stroke-width="0.8" opacity="0.85"/>
+                </g>
+      
+                <!-- Collar (blue) + tag -->
+                <rect x="70" y="128" width="60" height="10" rx="5" fill="#2563EB"/>
+                <circle cx="100" cy="142" r="9" fill="#F59E0B"/>
+                <text x="100" y="146" text-anchor="middle" font-size="7" font-weight="bold" fill="#1A1A1A">ZJ</text>
+      
+                <!-- Head -->
+                <circle cx="100" cy="90" r="44" :style="'fill:'+petBodyColor"/>
+                <!-- Head black patch (left forehead) -->
+                <ellipse cx="76" cy="74" rx="22" ry="17" fill="#1A1A1A" opacity="0.85"/>
+      
+                <!-- Level 4 crown -->
+                <g x-show="petLevel >= 4">
+                  <rect x="76" y="42" width="48" height="14" rx="3" fill="#FFD700"/>
+                  <polygon points="76,56 86,34 96,50 100,32 104,50 114,34 124,56" fill="#FFD700" stroke="#E6AC00" stroke-width="1.2"/>
+                  <circle cx="100" cy="34" r="5" fill="#FF6B6B"/>
+                  <circle cx="86" cy="46" r="3.5" fill="#6BDDFF"/>
+                  <circle cx="114" cy="46" r="3.5" fill="#A8FF78"/>
+                </g>
+      
+                <!-- Snout -->
+                <ellipse cx="100" cy="106" rx="21" ry="14" fill="#E0E0E0"/>
+                <!-- Nose -->
+                <ellipse cx="100" cy="99" rx="8.5" ry="6" fill="#1A1A1A"/>
+                <!-- Nose highlight -->
+                <circle cx="96.5" cy="97" r="2.5" fill="white" opacity="0.8"/>
+      
+                <!-- ── EYES ── -->
+                <!-- Happy/Excited: ^ arcs -->
+                <g x-show="petMood==='happy'||petMood==='excited'">
+                  <path d="M 68 88 Q 78 77 88 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+                  <path d="M 112 88 Q 122 77 132 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+                </g>
+                <!-- Neutral -->
+                <g x-show="petMood==='neutral'">
+                  <circle cx="78" cy="86" r="8.5" fill="#1A1A1A"/>
+                  <circle cx="122" cy="86" r="8.5" fill="#1A1A1A"/>
+                  <circle cx="81" cy="82.5" r="2.5" fill="white"/>
+                  <circle cx="125" cy="82.5" r="2.5" fill="white"/>
+                </g>
+                <!-- Worried: tilted with brows -->
+                <g x-show="petMood==='worried'">
+                  <ellipse cx="78" cy="88" rx="7.5" ry="8.5" fill="#1A1A1A" transform="rotate(12,78,88)"/>
+                  <ellipse cx="122" cy="88" rx="7.5" ry="8.5" fill="#1A1A1A" transform="rotate(-12,122,88)"/>
+                  <circle cx="80" cy="84" r="2" fill="white"/>
+                  <circle cx="124" cy="84" r="2" fill="white"/>
+                  <line x1="68" y1="73" x2="83" y2="78" stroke="#1A1A1A" stroke-width="2.5" stroke-linecap="round"/>
+                  <line x1="117" y1="78" x2="132" y2="73" stroke="#1A1A1A" stroke-width="2.5" stroke-linecap="round"/>
+                </g>
+                <!-- Sick: X eyes -->
+                <g x-show="petMood==='sick'">
+                  <line x1="68" y1="78" x2="87" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
+                  <line x1="87" y1="78" x2="68" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
+                  <line x1="113" y1="78" x2="132" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
+                  <line x1="132" y1="78" x2="113" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
+                </g>
+                <!-- Sleeping: closed arcs -->
+                <g x-show="petMood==='sleeping'">
+                  <path d="M 68 88 Q 78 98 88 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+                  <path d="M 112 88 Q 122 98 132 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+                </g>
+      
+                <!-- ── MOUTHS ── -->
+                <path x-show="petMood==='happy'||petMood==='excited'"
+                  d="M 85 116 Q 100 128 115 116" stroke="#1A1A1A" stroke-width="3" fill="none" stroke-linecap="round"/>
+                <!-- Tongue (happy/excited) -->
+                <g x-show="petMood==='happy'||petMood==='excited'">
+                  <ellipse cx="100" cy="126" rx="8" ry="6" fill="#FF6B8A"/>
+                  <line x1="100" y1="120" x2="100" y2="121" stroke="#1A1A1A" stroke-width="1.5"/>
+                </g>
+                <path x-show="petMood==='neutral'"
+                  d="M 87 118 Q 100 123 113 118" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                <path x-show="petMood==='worried'"
+                  d="M 87 122 Q 100 114 113 122" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                <path x-show="petMood==='sick'"
+                  d="M 87 120 Q 94 113 100 120 Q 106 127 113 120" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+                <path x-show="petMood==='sleeping'"
+                  d="M 90 118 Q 100 122 110 118" stroke="#1A1A1A" stroke-width="2" fill="none" stroke-linecap="round"/>
+      
+                <!-- Blush cheeks (happy/excited) -->
+                <ellipse x-show="petMood==='happy'||petMood==='excited'" cx="64" cy="108" rx="12" ry="8" fill="#FF9999" opacity="0.35"/>
+                <ellipse x-show="petMood==='happy'||petMood==='excited'" cx="136" cy="108" rx="12" ry="8" fill="#FF9999" opacity="0.35"/>
+      
+                <!-- Sweat drop (worried/sick) -->
+                <g x-show="petMood==='worried'||petMood==='sick'">
+                  <path d="M 150 68 Q 154 58 150 52 Q 146 58 150 68" fill="#6EC6FF" opacity="0.75"/>
+                </g>
+      
+                <!-- ZZZ (sleeping) -->
+                <g x-show="petMood==='sleeping'">
+                  <text class="pet-zzz-1" x="140" y="74" font-size="22" font-weight="bold" fill="#8899BB" opacity="0.85">z</text>
+                  <text class="pet-zzz-2" x="156" y="56" font-size="16" font-weight="bold" fill="#8899BB" opacity="0.65">z</text>
+                  <text class="pet-zzz-3" x="169" y="42" font-size="11" font-weight="bold" fill="#8899BB" opacity="0.45">z</text>
+                </g>
+      
+                <!-- Sparkles (excited) -->
+                <g x-show="petMood==='excited'">
+                  <text class="pet-sp-1" x="8" y="76" font-size="24">✨</text>
+                  <text class="pet-sp-2" x="155" y="86" font-size="20">⭐</text>
+                  <text class="pet-sp-3" x="4" y="148" font-size="16">✨</text>
+                  <text class="pet-sp-4" x="160" y="160" font-size="16">🌟</text>
+                </g>
+              </svg>
+            </div>
+      
+            <!-- Speech bubble -->
+            <div style="position:relative;z-index:1;margin-top:18px;padding:12px 16px;background:var(--surf2);border-radius:14px;font-size:13px;line-height:1.6;border:1px solid var(--border);">
+              <span style="font-style:italic;" x-text="petState.message"></span>
+            </div>
+          </div>
+      
+          <!-- Stat bars -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;">Pet Stats</div>
+      
+            <!-- Health (budget adherence) -->
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
+                <span>❤️ Health <span style="font-size:10px;color:var(--muted);">(budget adherence)</span></span>
+                <span :style="petState.health < 40 ? 'color:var(--red);font-weight:600' : 'color:var(--text)'" x-text="petState.health + '%'"></span>
+              </div>
+              <div style="height:10px;border-radius:5px;background:var(--surf2);">
+                <div class="pet-stat-bar" :style="`width:${petState.health}%;background:${petState.health>=60?'#ef4444':petState.health>=30?'#f59e0b':'#ef4444'}`"></div>
+              </div>
+            </div>
+      
+            <!-- Fullness (savings rate) -->
+            <div style="margin-bottom:12px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
+                <span>🍎 Fullness <span style="font-size:10px;color:var(--muted);">(savings rate)</span></span>
+                <span :style="petState.hunger < 30 ? 'color:var(--amber);font-weight:600' : 'color:var(--text)'" x-text="petState.hunger + '%'"></span>
+              </div>
+              <div style="height:10px;border-radius:5px;background:var(--surf2);">
+                <div class="pet-stat-bar" :style="`width:${petState.hunger}%;background:#f59e0b`"></div>
+              </div>
+            </div>
+      
+            <!-- Happiness (finance score) -->
+            <div>
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
+                <span>😊 Happiness <span style="font-size:10px;color:var(--muted);">(finance score)</span></span>
+                <span :style="petState.happiness < 50 ? 'color:var(--amber);font-weight:600' : 'color:var(--text)'" x-text="petState.happiness + '/100'"></span>
+              </div>
+              <div style="height:10px;border-radius:5px;background:var(--surf2);">
+                <div class="pet-stat-bar" :style="`width:${petState.happiness}%;background:#38bdf8`"></div>
+              </div>
+            </div>
+          </div>
+      
+          <!-- Action buttons -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;">Interactions</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+              <button @click="feedPet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
+                <span style="font-size:26px;">🍎</span>
+                <span style="font-size:12px;font-weight:600;">Feed</span>
+                <span style="font-size:10px;color:var(--muted);">Add to savings goal</span>
+              </button>
+              <button @click="exercisePet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
+                <span style="font-size:26px;">🏃</span>
+                <span style="font-size:12px;font-weight:600;">Exercise</span>
+                <span style="font-size:10px;color:var(--muted);">Categorise transactions</span>
+              </button>
+              <button @click="bathPet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
+                <span style="font-size:26px;">🛁</span>
+                <span style="font-size:12px;font-weight:600;">Bath</span>
+                <span style="font-size:10px;color:var(--muted);">Review budgets</span>
+              </button>
+              <button @click="treatPet()" class="btn btn-ghost" :disabled="petState.health < 80"
+                style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
+                <span style="font-size:26px;">🎁</span>
+                <span style="font-size:12px;font-weight:600;">Treat</span>
+                <span style="font-size:10px;" :style="petState.health >= 80 ? 'color:var(--green);font-weight:600' : 'color:var(--muted)'"
+                  x-text="petState.health >= 80 ? 'Earned it! 🌟' : 'Need 80%+ health'"></span>
+              </button>
+            </div>
+          </div>
+      
+          <!-- Level progress -->
+          <div class="card" style="margin-bottom:16px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+              <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;" x-text="petLevelLabel"></div>
+              <div style="font-size:11px;color:var(--muted);" x-text="petLevel < 4 ? 'Score ' + (petLevel*25) + '+ → Level ' + (petLevel+1) : '👑 Max Level!'"></div>
+            </div>
+            <div style="height:14px;border-radius:7px;background:var(--surf2);overflow:hidden;">
+              <div :style="`width:${petLevelProgress}%;height:100%;border-radius:7px;background:linear-gradient(90deg,#FFB347,#FFD700);transition:width .7s ease;`"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px;">
+              <span x-text="'Lv' + petLevel"></span>
+              <span x-text="petLevel < 4 ? 'Lv' + (petLevel+1) : '👑 MAX'"></span>
+            </div>
+          </div>
+      
+          <!-- Activity log -->
+          <div x-show="petActivityLog.length > 0" class="card">
+            <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px;">Activity Log</div>
+            <template x-for="(entry, i) in petActivityLog.slice(0,8)" :key="i">
+              <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:7px 0;border-bottom:1px solid rgba(26,48,78,.4);">
+                <span x-text="entry.action"></span>
+                <span style="color:var(--muted);font-size:11px;flex-shrink:0;margin-left:8px;" x-text="timeSince(entry.time)"></span>
+              </div>
+            </template>
+          </div>
+      
+        </div>
+      </div>
     </div><!-- /page-content -->
   </div><!-- /main -->
 </div><!-- /flex -->
@@ -5739,335 +6230,64 @@
   </div>
 </div>
 
-<!-- ═══ CHAT HISTORY PAGE ═══ -->
-<div x-show="page === 'chathistory'" x-cloak>
-  <div style="max-width:760px;">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
-      <div>
-        <div style="font-size:22px;font-weight:700;">💬 Chat History</div>
-        <div style="font-size:13px;color:var(--muted);margin-top:2px;">Your previous conversations with the Finance Assistant</div>
-      </div>
-      <button @click="newChat(); chatOpen=true" class="btn btn-primary btn-sm">+ New Chat</button>
-    </div>
-
-    <!-- Search bar -->
-    <div style="margin-bottom:16px;position:relative;">
-      <input type="text" x-model="chatHistorySearch"
-        @input.debounce.400ms="loadChatConversations()"
-        placeholder="Search conversations…"
-        style="width:100%;padding:10px 14px 10px 38px;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--text);font-size:13px;" />
-      <span style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;">🔍</span>
-    </div>
-
-    <!-- Conversation list -->
-    <div x-show="chatConversations.length === 0 && !chatHistorySearch"
-      style="text-align:center;padding:48px 24px;color:var(--muted);">
-      <div style="font-size:36px;margin-bottom:12px;">💬</div>
-      <div style="font-size:15px;margin-bottom:6px;">No conversations yet</div>
-      <div style="font-size:13px;">Open the chat assistant and start asking questions about your finances.</div>
-    </div>
-    <div x-show="chatConversations.length === 0 && chatHistorySearch"
-      style="text-align:center;padding:48px 24px;color:var(--muted);">
-      No conversations match "<span x-text="chatHistorySearch"></span>"
-    </div>
-
-    <div style="display:flex;flex-direction:column;gap:10px;">
-      <template x-for="conv in chatConversations" :key="conv.id">
-        <div class="card" style="cursor:pointer;padding:16px 18px;transition:border-color 0.15s;"
-          @click="openConversation(conv)"
-          @mouseenter="$el.style.borderColor='var(--accent)'"
-          @mouseleave="$el.style.borderColor='var(--border)'">
-          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;">
-            <div style="min-width:0;flex:1;">
-              <div style="font-weight:600;font-size:14px;margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"
-                x-text="conv.title || 'Untitled conversation'"></div>
-              <div x-show="conv.preview" style="font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;"
-                x-text="conv.preview"></div>
-              <div style="display:flex;gap:12px;font-size:11px;color:var(--muted);">
-                <span x-text="new Date(conv.updated_at).toLocaleDateString('en-AU', {day:'numeric',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'})"></span>
-                <span x-text="(conv.message_count || 0) + ' messages'"></span>
-              </div>
-            </div>
-            <div style="display:flex;gap:6px;flex-shrink:0;">
-              <button @click.stop="openConversation(conv)" class="btn btn-ghost btn-sm" style="font-size:11px;">Open</button>
-              <button @click.stop="deleteConversation(conv.id)" class="btn btn-ghost btn-sm"
-                style="font-size:11px;color:var(--red);" title="Delete conversation">🗑</button>
-            </div>
-          </div>
-        </div>
-      </template>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ FINANCE PET PAGE ═══ -->
-<div x-show="page === 'pet'" x-cloak>
-  <div style="max-width:480px;margin:0 auto;padding-bottom:32px;">
-
+<!-- ═══ BUDGET DRILL-DOWN MODAL ═══ -->
+<div x-show="budgetDrill.open" x-cloak class="modal-bg" @click.self="budgetDrill.open=false">
+  <div class="modal" style="max-width:520px;max-height:80vh;display:flex;flex-direction:column;">
     <!-- Header -->
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;">
-      <div>
-        <div style="font-size:22px;font-weight:700;">🐾 Finance Pet</div>
-        <div style="font-size:12px;color:var(--muted);" x-text="'Level ' + petLevel + ' · Finance Score ' + (petState.happiness) + '/100'"></div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;">
-        <input x-show="petRenaming" x-ref="petNameInput" type="text" x-model="petName" maxlength="20"
-          @keydown.enter="savePetName()" @keydown.escape="petRenaming=false"
-          style="width:120px;padding:5px 10px;font-size:14px;" placeholder="Name..."/>
-        <button x-show="petRenaming" @click="savePetName()" class="btn btn-primary btn-sm">Save</button>
-        <button x-show="!petRenaming" @click="petRenaming=true; $nextTick(()=>$refs.petNameInput?.focus())"
-          class="btn btn-ghost btn-sm" title="Rename pet">✏️</button>
-      </div>
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:4px;flex-shrink:0;">
+      <span style="width:10px;height:10px;border-radius:50%;flex-shrink:0;"
+        :style="`background:${budgetDrill.budget?.category_colour||'var(--accent)'}`"></span>
+      <div style="font-weight:600;font-size:16px;flex:1;" x-text="budgetDrill.budget?.category_name"></div>
+      <button @click="budgetDrill.open=false" style="background:none;border:none;cursor:pointer;color:var(--muted);font-size:18px;line-height:1;padding:4px;">✕</button>
     </div>
-
-    <!-- Character card -->
-    <div class="card" style="text-align:center;margin-bottom:16px;padding:28px 16px 20px;position:relative;overflow:hidden;">
-      <!-- Mood background glow -->
-      <div :style="`position:absolute;inset:0;background:radial-gradient(ellipse at 50% 65%, ${petBgGlow} 0%, transparent 70%);pointer-events:none;`"></div>
-
-      <!-- Pet name + level label -->
-      <div style="position:relative;z-index:1;">
-        <div style="font-size:20px;font-weight:700;" x-text="petName"></div>
-        <div style="font-size:12px;color:var(--muted);margin-bottom:16px;" x-text="petLevelLabel"></div>
+    <!-- Budget progress summary -->
+    <div style="flex-shrink:0;margin-bottom:14px;">
+      <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px;">
+        <span>
+          <span style="color:var(--text);font-weight:600;" x-text="'$' + fmt(budgetDrill.budget?.spend||0)"></span>
+          <span x-text="' spent of $' + fmt(budgetDrill.budget?.budget||0)"></span>
+        </span>
+        <span :style="(budgetDrill.budget?.status==='red')?'color:var(--red)':(budgetDrill.budget?.status==='amber')?'color:var(--amber)':'color:var(--green)'"
+          x-text="(budgetDrill.budget?.pct||0) + '% used'"></span>
       </div>
-
-      <!-- SVG Character "Zeus Jnr" — black & white dog -->
-      <div style="position:relative;z-index:1;display:inline-block;">
-        <svg viewBox="0 0 200 220" width="190" height="209" :class="petTreatActive ? 'pet-treat' : petAnimClass" style="overflow:visible;display:block;">
-          <!-- Shadow -->
-          <ellipse cx="100" cy="213" rx="50" ry="6" fill="rgba(0,0,0,0.12)"/>
-
-          <!-- Tail (mood-driven, right side of body) -->
-          <g x-show="petMood==='happy'||petMood==='excited'">
-            <path d="M 144 148 C 172 126 178 100 164 88" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
-          </g>
-          <g x-show="petMood==='neutral'">
-            <path d="M 146 160 Q 173 156 178 148" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
-          </g>
-          <g x-show="petMood==='worried'||petMood==='sick'||petMood==='sleeping'">
-            <path d="M 144 170 Q 164 188 158 202" stroke="#1A1A1A" stroke-width="8" fill="none" stroke-linecap="round"/>
-          </g>
-
-          <!-- Floppy ears (behind head, drawn first) -->
-          <ellipse cx="56" cy="104" rx="17" ry="30" fill="#1A1A1A" transform="rotate(-8,56,104)"/>
-          <ellipse cx="144" cy="104" rx="17" ry="30" fill="#1A1A1A" transform="rotate(8,144,104)"/>
-
-          <!-- Body -->
-          <circle cx="100" cy="161" r="48" :style="'fill:'+petBodyColor"/>
-          <!-- Body black patch (upper-right) -->
-          <ellipse cx="126" cy="144" rx="22" ry="18" fill="#1A1A1A" opacity="0.85"/>
-          <!-- Belly (lighter) -->
-          <ellipse cx="88" cy="174" rx="26" ry="22" :style="'fill:'+petBellyColor"/>
-
-          <!-- Level 3 badge: star on chest -->
-          <g x-show="petLevel >= 3 && petLevel < 4">
-            <polygon points="100,178 104,188 115,188 107,195 110,205 100,199 90,205 93,195 85,188 96,188"
-              fill="#FFD700" stroke="#E6AC00" stroke-width="0.8" opacity="0.85"/>
-          </g>
-
-          <!-- Collar (blue) + tag -->
-          <rect x="70" y="128" width="60" height="10" rx="5" fill="#2563EB"/>
-          <circle cx="100" cy="142" r="9" fill="#F59E0B"/>
-          <text x="100" y="146" text-anchor="middle" font-size="7" font-weight="bold" fill="#1A1A1A">ZJ</text>
-
-          <!-- Head -->
-          <circle cx="100" cy="90" r="44" :style="'fill:'+petBodyColor"/>
-          <!-- Head black patch (left forehead) -->
-          <ellipse cx="76" cy="74" rx="22" ry="17" fill="#1A1A1A" opacity="0.85"/>
-
-          <!-- Level 4 crown -->
-          <g x-show="petLevel >= 4">
-            <rect x="76" y="42" width="48" height="14" rx="3" fill="#FFD700"/>
-            <polygon points="76,56 86,34 96,50 100,32 104,50 114,34 124,56" fill="#FFD700" stroke="#E6AC00" stroke-width="1.2"/>
-            <circle cx="100" cy="34" r="5" fill="#FF6B6B"/>
-            <circle cx="86" cy="46" r="3.5" fill="#6BDDFF"/>
-            <circle cx="114" cy="46" r="3.5" fill="#A8FF78"/>
-          </g>
-
-          <!-- Snout -->
-          <ellipse cx="100" cy="106" rx="21" ry="14" fill="#E0E0E0"/>
-          <!-- Nose -->
-          <ellipse cx="100" cy="99" rx="8.5" ry="6" fill="#1A1A1A"/>
-          <!-- Nose highlight -->
-          <circle cx="96.5" cy="97" r="2.5" fill="white" opacity="0.8"/>
-
-          <!-- ── EYES ── -->
-          <!-- Happy/Excited: ^ arcs -->
-          <g x-show="petMood==='happy'||petMood==='excited'">
-            <path d="M 68 88 Q 78 77 88 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-            <path d="M 112 88 Q 122 77 132 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-          </g>
-          <!-- Neutral -->
-          <g x-show="petMood==='neutral'">
-            <circle cx="78" cy="86" r="8.5" fill="#1A1A1A"/>
-            <circle cx="122" cy="86" r="8.5" fill="#1A1A1A"/>
-            <circle cx="81" cy="82.5" r="2.5" fill="white"/>
-            <circle cx="125" cy="82.5" r="2.5" fill="white"/>
-          </g>
-          <!-- Worried: tilted with brows -->
-          <g x-show="petMood==='worried'">
-            <ellipse cx="78" cy="88" rx="7.5" ry="8.5" fill="#1A1A1A" transform="rotate(12,78,88)"/>
-            <ellipse cx="122" cy="88" rx="7.5" ry="8.5" fill="#1A1A1A" transform="rotate(-12,122,88)"/>
-            <circle cx="80" cy="84" r="2" fill="white"/>
-            <circle cx="124" cy="84" r="2" fill="white"/>
-            <line x1="68" y1="73" x2="83" y2="78" stroke="#1A1A1A" stroke-width="2.5" stroke-linecap="round"/>
-            <line x1="117" y1="78" x2="132" y2="73" stroke="#1A1A1A" stroke-width="2.5" stroke-linecap="round"/>
-          </g>
-          <!-- Sick: X eyes -->
-          <g x-show="petMood==='sick'">
-            <line x1="68" y1="78" x2="87" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
-            <line x1="87" y1="78" x2="68" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
-            <line x1="113" y1="78" x2="132" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
-            <line x1="132" y1="78" x2="113" y2="96" stroke="#1A1A1A" stroke-width="3" stroke-linecap="round"/>
-          </g>
-          <!-- Sleeping: closed arcs -->
-          <g x-show="petMood==='sleeping'">
-            <path d="M 68 88 Q 78 98 88 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-            <path d="M 112 88 Q 122 98 132 88" stroke="#1A1A1A" stroke-width="3.5" fill="none" stroke-linecap="round"/>
-          </g>
-
-          <!-- ── MOUTHS ── -->
-          <path x-show="petMood==='happy'||petMood==='excited'"
-            d="M 85 116 Q 100 128 115 116" stroke="#1A1A1A" stroke-width="3" fill="none" stroke-linecap="round"/>
-          <!-- Tongue (happy/excited) -->
-          <g x-show="petMood==='happy'||petMood==='excited'">
-            <ellipse cx="100" cy="126" rx="8" ry="6" fill="#FF6B8A"/>
-            <line x1="100" y1="120" x2="100" y2="121" stroke="#1A1A1A" stroke-width="1.5"/>
-          </g>
-          <path x-show="petMood==='neutral'"
-            d="M 87 118 Q 100 123 113 118" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-          <path x-show="petMood==='worried'"
-            d="M 87 122 Q 100 114 113 122" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-          <path x-show="petMood==='sick'"
-            d="M 87 120 Q 94 113 100 120 Q 106 127 113 120" stroke="#1A1A1A" stroke-width="2.5" fill="none" stroke-linecap="round"/>
-          <path x-show="petMood==='sleeping'"
-            d="M 90 118 Q 100 122 110 118" stroke="#1A1A1A" stroke-width="2" fill="none" stroke-linecap="round"/>
-
-          <!-- Blush cheeks (happy/excited) -->
-          <ellipse x-show="petMood==='happy'||petMood==='excited'" cx="64" cy="108" rx="12" ry="8" fill="#FF9999" opacity="0.35"/>
-          <ellipse x-show="petMood==='happy'||petMood==='excited'" cx="136" cy="108" rx="12" ry="8" fill="#FF9999" opacity="0.35"/>
-
-          <!-- Sweat drop (worried/sick) -->
-          <g x-show="petMood==='worried'||petMood==='sick'">
-            <path d="M 150 68 Q 154 58 150 52 Q 146 58 150 68" fill="#6EC6FF" opacity="0.75"/>
-          </g>
-
-          <!-- ZZZ (sleeping) -->
-          <g x-show="petMood==='sleeping'">
-            <text class="pet-zzz-1" x="140" y="74" font-size="22" font-weight="bold" fill="#8899BB" opacity="0.85">z</text>
-            <text class="pet-zzz-2" x="156" y="56" font-size="16" font-weight="bold" fill="#8899BB" opacity="0.65">z</text>
-            <text class="pet-zzz-3" x="169" y="42" font-size="11" font-weight="bold" fill="#8899BB" opacity="0.45">z</text>
-          </g>
-
-          <!-- Sparkles (excited) -->
-          <g x-show="petMood==='excited'">
-            <text class="pet-sp-1" x="8" y="76" font-size="24">✨</text>
-            <text class="pet-sp-2" x="155" y="86" font-size="20">⭐</text>
-            <text class="pet-sp-3" x="4" y="148" font-size="16">✨</text>
-            <text class="pet-sp-4" x="160" y="160" font-size="16">🌟</text>
-          </g>
-        </svg>
+      <div class="prog-track">
+        <div class="prog-fill"
+          :style="`width:${Math.min(budgetDrill.budget?.pct||0,100)}%;background:${(budgetDrill.budget?.status==='red')?'var(--red)':(budgetDrill.budget?.status==='amber')?'var(--amber)':'var(--green)'}`">
+        </div>
       </div>
-
-      <!-- Speech bubble -->
-      <div style="position:relative;z-index:1;margin-top:18px;padding:12px 16px;background:var(--surf2);border-radius:14px;font-size:13px;line-height:1.6;border:1px solid var(--border);">
-        <span style="font-style:italic;" x-text="petState.message"></span>
-      </div>
+      <div style="font-size:11px;color:var(--muted);margin-top:4px;"
+        x-text="(budgetDrill.budget?.remaining||0) >= 0 ? '$' + fmt(budgetDrill.budget?.remaining||0) + ' remaining' : '$' + fmt(Math.abs(budgetDrill.budget?.remaining||0)) + ' over budget'"></div>
     </div>
-
-    <!-- Stat bars -->
-    <div class="card" style="margin-bottom:16px;">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;">Pet Stats</div>
-
-      <!-- Health (budget adherence) -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
-          <span>❤️ Health <span style="font-size:10px;color:var(--muted);">(budget adherence)</span></span>
-          <span :style="petState.health < 40 ? 'color:var(--red);font-weight:600' : 'color:var(--text)'" x-text="petState.health + '%'"></span>
-        </div>
-        <div style="height:10px;border-radius:5px;background:var(--surf2);">
-          <div class="pet-stat-bar" :style="`width:${petState.health}%;background:${petState.health>=60?'#ef4444':petState.health>=30?'#f59e0b':'#ef4444'}`"></div>
-        </div>
-      </div>
-
-      <!-- Fullness (savings rate) -->
-      <div style="margin-bottom:12px;">
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
-          <span>🍎 Fullness <span style="font-size:10px;color:var(--muted);">(savings rate)</span></span>
-          <span :style="petState.hunger < 30 ? 'color:var(--amber);font-weight:600' : 'color:var(--text)'" x-text="petState.hunger + '%'"></span>
-        </div>
-        <div style="height:10px;border-radius:5px;background:var(--surf2);">
-          <div class="pet-stat-bar" :style="`width:${petState.hunger}%;background:#f59e0b`"></div>
-        </div>
-      </div>
-
-      <!-- Happiness (finance score) -->
-      <div>
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:5px;">
-          <span>😊 Happiness <span style="font-size:10px;color:var(--muted);">(finance score)</span></span>
-          <span :style="petState.happiness < 50 ? 'color:var(--amber);font-weight:600' : 'color:var(--text)'" x-text="petState.happiness + '/100'"></span>
-        </div>
-        <div style="height:10px;border-radius:5px;background:var(--surf2);">
-          <div class="pet-stat-bar" :style="`width:${petState.happiness}%;background:#38bdf8`"></div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Action buttons -->
-    <div class="card" style="margin-bottom:16px;">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:14px;">Interactions</div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
-        <button @click="feedPet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
-          <span style="font-size:26px;">🍎</span>
-          <span style="font-size:12px;font-weight:600;">Feed</span>
-          <span style="font-size:10px;color:var(--muted);">Add to savings goal</span>
-        </button>
-        <button @click="exercisePet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
-          <span style="font-size:26px;">🏃</span>
-          <span style="font-size:12px;font-weight:600;">Exercise</span>
-          <span style="font-size:10px;color:var(--muted);">Categorise transactions</span>
-        </button>
-        <button @click="bathPet()" class="btn btn-ghost" style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
-          <span style="font-size:26px;">🛁</span>
-          <span style="font-size:12px;font-weight:600;">Bath</span>
-          <span style="font-size:10px;color:var(--muted);">Review budgets</span>
-        </button>
-        <button @click="treatPet()" class="btn btn-ghost" :disabled="petState.health < 80"
-          style="display:flex;flex-direction:column;align-items:center;gap:5px;height:auto;padding:14px 8px;">
-          <span style="font-size:26px;">🎁</span>
-          <span style="font-size:12px;font-weight:600;">Treat</span>
-          <span style="font-size:10px;" :style="petState.health >= 80 ? 'color:var(--green);font-weight:600' : 'color:var(--muted)'"
-            x-text="petState.health >= 80 ? 'Earned it! 🌟' : 'Need 80%+ health'"></span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Level progress -->
-    <div class="card" style="margin-bottom:16px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-        <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;" x-text="petLevelLabel"></div>
-        <div style="font-size:11px;color:var(--muted);" x-text="petLevel < 4 ? 'Score ' + (petLevel*25) + '+ → Level ' + (petLevel+1) : '👑 Max Level!'"></div>
-      </div>
-      <div style="height:14px;border-radius:7px;background:var(--surf2);overflow:hidden;">
-        <div :style="`width:${petLevelProgress}%;height:100%;border-radius:7px;background:linear-gradient(90deg,#FFB347,#FFD700);transition:width .7s ease;`"></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--muted);margin-top:4px;">
-        <span x-text="'Lv' + petLevel"></span>
-        <span x-text="petLevel < 4 ? 'Lv' + (petLevel+1) : '👑 MAX'"></span>
-      </div>
-    </div>
-
-    <!-- Activity log -->
-    <div x-show="petActivityLog.length > 0" class="card">
-      <div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.07em;margin-bottom:12px;">Activity Log</div>
-      <template x-for="(entry, i) in petActivityLog.slice(0,8)" :key="i">
-        <div style="display:flex;justify-content:space-between;align-items:center;font-size:12px;padding:7px 0;border-bottom:1px solid rgba(26,48,78,.4);">
-          <span x-text="entry.action"></span>
-          <span style="color:var(--muted);font-size:11px;flex-shrink:0;margin-left:8px;" x-text="timeSince(entry.time)"></span>
+    <!-- Transactions list -->
+    <div style="flex:1;overflow-y:auto;min-height:0;">
+      <div x-show="budgetDrill.loading" style="text-align:center;padding:24px;color:var(--muted);">Loading…</div>
+      <div x-show="!budgetDrill.loading && budgetDrill.txns.length === 0"
+        style="text-align:center;padding:24px;color:var(--muted);font-size:13px;">No transactions found for this period.</div>
+      <template x-for="t in budgetDrill.txns" :key="t.id">
+        <div style="display:flex;align-items:center;gap:10px;padding:9px 2px;border-bottom:1px solid var(--border);">
+          <div style="width:34px;height:34px;border-radius:50%;overflow:hidden;flex-shrink:0;background:var(--surf2);display:flex;align-items:center;justify-content:center;">
+            <template x-if="t.logo_url">
+              <img :src="t.logo_url" style="width:34px;height:34px;object-fit:cover;" @error="$el.style.display='none'" />
+            </template>
+            <span x-show="!t.logo_url" style="font-size:13px;color:var(--muted);" x-text="(t.description||'?')[0].toUpperCase()"></span>
+          </div>
+          <div style="flex:1;min-width:0;">
+            <div style="font-size:13px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="t.description"></div>
+            <div style="font-size:11px;color:var(--muted);" x-text="t.date"></div>
+          </div>
+          <div style="font-size:14px;font-weight:600;color:var(--red);flex-shrink:0;" x-text="'$' + fmt(t.amount)"></div>
         </div>
       </template>
     </div>
-
+    <!-- Footer: total & link -->
+    <div x-show="budgetDrill.txns.length > 0"
+      style="flex-shrink:0;margin-top:12px;padding-top:10px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+      <span style="font-size:12px;color:var(--muted);" x-text="budgetDrill.txns.length + ' transaction' + (budgetDrill.txns.length===1?'':'s')"></span>
+      <button @click="budgetDrill.open=false; const uc=categories.find(c=>c.name===budgetDrill.budget?.category_name); txnFilter.category_id=uc?uc.id:''; txnFilter.month=budgetMonth; txnFilter.year=budgetYear; txnOffset=0; page='transactions'; loadTransactions()"
+        style="font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0;">
+        View in Transactions →
+      </button>
+    </div>
   </div>
 </div>
 
@@ -6297,6 +6517,7 @@ function app() {
       { id: 'reports', label: 'Reports', icon: '📋' },
       { id: 'pulse', label: 'Market Pulse', icon: '📡' },
       { id: 'chathistory', label: 'Chat History', icon: '💬' },
+      { id: 'pet', label: 'Finance Pet', icon: '🐾' },
     ],
 
     // Data
@@ -6354,6 +6575,7 @@ function app() {
     txnAdvancedOpen: false,
     payslipFilter: { search: '', year: '' },
     investFilter: { search: '', broker: '' },
+    expandedTickers: {},
     atoPrefill: null,
     mcpKey: '',
     showMcpSnippet: false,
@@ -6378,6 +6600,9 @@ function app() {
     importLoading: false,
     budgetMonth: new Date().getMonth() + 1,
     budgetYear: new Date().getFullYear(),
+    budgetDrill: { open: false, budget: null, txns: [], loading: false },
+    billPredictions: [],
+    billPredictLoading: false,
     taxFY: new Date().getMonth() >= 6 ? new Date().getFullYear() + 1 : new Date().getFullYear(),
     fySummary: null,
     wfhDays: 0,
@@ -6417,7 +6642,7 @@ function app() {
     importResult: '',
     importError: '',
     newAccount: { name: '', account_number: '' },
-    newCat: { name: '', colour: '#38bdf8', is_income: false, is_tax_relevant: false },
+    newCat: { name: '', colour: '#38bdf8', is_income: false, is_tax_relevant: false, exclude_from_spend: false },
     newBudget: { category_id: '', amount: '' },
     newBill: { name: '', amount: '', frequency: 'monthly', next_due: '', category_id: '' },
     editModal: { open: false, txn: null, category_id: null, tax_category: '', tax_deductible: false, is_flagged: false, notes: '' },
@@ -6570,6 +6795,11 @@ function app() {
     rbaScrubX: 0,
     rbaScrubLabel: '',
 
+    // Generic sparkline scrub (stat tiles + NW/Portfolio)
+    scrubKey: null,    // which sparkline: 'spend'|'income'|'net'|'nw'|'portfolio'
+    scrubX: 0,
+    scrubLabel: '',
+
     // Chat
     chatOpen: false,
     chatMessages: [],   // [{role:'user'|'assistant', content:''}]
@@ -6639,6 +6869,27 @@ function app() {
         if (f.broker && h.broker !== f.broker) return false;
         return true;
       });
+    },
+    get groupedInvestments() {
+      const map = {};
+      for (const h of this.filteredInvestments) {
+        if (!map[h.ticker]) map[h.ticker] = { ticker: h.ticker, name: h.name||'', price_aud: h.price_aud||0, broker: h.broker, holdings: [], total_qty: 0, total_cost: 0, total_value: 0 };
+        const g = map[h.ticker];
+        g.holdings.push(h);
+        const qty = parseFloat(h.qty) || 0;
+        const cost = (parseFloat(h.avg_cost_aud) || 0) * qty;
+        g.total_qty += qty;
+        g.total_cost += cost;
+        g.total_value += parseFloat(h.value_aud) || 0;
+        if (h.price_aud > 0) g.price_aud = h.price_aud;
+        if (h.name && !g.name) g.name = h.name;
+      }
+      return Object.values(map).map(g => ({
+        ...g,
+        avg_cost_aud: g.total_qty > 0 ? g.total_cost / g.total_qty : 0,
+        gain_aud: g.total_value - g.total_cost,
+        gain_pct: g.total_cost > 0 ? ((g.total_value - g.total_cost) / g.total_cost) * 100 : 0,
+      }));
     },
     get payslipYears() {
       const years = [...new Set(this.payslips.map(p => p.pay_date.slice(0,4)))].sort().reverse();
@@ -6850,7 +7101,10 @@ function app() {
     sparklineSvg(data, color) {
       color = color || '#38bdf8';
       if (!data || data.length < 1) return '';
-      if (data.length === 1) return '';
+      if (data.length === 1) {
+        const W = 200, H = 48, y = H * 0.55;
+        return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="position:absolute;bottom:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;opacity:0.22;"><defs><linearGradient id="spkl1pt" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity="0.25"/><stop offset="100%" stop-color="${color}" stop-opacity="0"/></linearGradient></defs><path d="M0,${H} L0,${y} L${W},${y} L${W},${H} Z" fill="url(#spkl1pt)"/><line x1="0" y1="${y}" x2="${W}" y2="${y}" stroke="${color}" stroke-width="1.5" stroke-dasharray="6 4" opacity="0.6"/><circle cx="${W-6}" cy="${y}" r="3" fill="${color}" opacity="0.7"/></svg>`;
+      }
       const W = 200, H = 48;
       const vals = data.map(d => d.v);
       const mn = Math.min(...vals), mx = Math.max(...vals);
@@ -6914,6 +7168,24 @@ function app() {
       const first = pts[0].label;
       const last = pts[pts.length - 1].label;
       return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" style="position:absolute;bottom:0;left:0;width:100%;height:100%;pointer-events:none;z-index:0;overflow:visible;"><polyline points="${poly}" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1" stroke-linejoin="round"/><text x="${padX}" y="${H - 2}" font-size="7.5" fill="rgba(255,255,255,0.25)" text-anchor="start" font-family="sans-serif">${first}</text><text x="${W - padX}" y="${H - 2}" font-size="7.5" fill="rgba(255,255,255,0.25)" text-anchor="end" font-family="sans-serif">${last}</text></svg>`;
+    },
+
+    // ── Generic sparkline interactive scrub ──
+    onScrub(e, data, key) {
+      if (!data || data.length < 1) return;
+      if (data.length === 1) {
+        this.scrubKey = key;
+        this.scrubLabel = data[0].label || '';
+        this.scrubX = e.currentTarget.getBoundingClientRect().width / 2;
+        return;
+      }
+      const rect = e.currentTarget.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const relX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const idx = Math.round(relX * (data.length - 1));
+      this.scrubKey = key;
+      this.scrubLabel = data[idx].label;
+      this.scrubX = relX * rect.width;
     },
 
     // ── RBA sparkline interactive scrub ──
@@ -7830,7 +8102,7 @@ function app() {
       fd.append('file', this.importFile);
       fd.append('account_id', this.importAccountId);
       try {
-        const res = await fetch((window.FINANCE_BASE || '') + '/api/import/csv', { method: 'POST', body: fd });
+        const res = await fetch((window.FINANCE_BASE || '') + '/api/import/csv', { method: 'POST', body: fd, headers: this.token ? { 'Authorization': 'Bearer ' + this.token } : {} });
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Import failed');
         this.importResult = `Imported ${data.imported} transactions, skipped ${data.skipped} duplicates.`;
@@ -7852,7 +8124,7 @@ function app() {
       await this.api('/api/categories', { method: 'POST', body: JSON.stringify({
         ...this.newCat, is_income: this.newCat.is_income === true || this.newCat.is_income === 'true',
       }) });
-      this.newCat = { name: '', colour: '#38bdf8', is_income: false, is_tax_relevant: false };
+      this.newCat = { name: '', colour: '#38bdf8', is_income: false, is_tax_relevant: false, exclude_from_spend: false };
       this.loadCategories(); this.showToast('Category added');
     },
     async deleteCategory(id) {
@@ -7871,6 +8143,20 @@ function app() {
       this.loadBudgets(); this.showToast('Budget set');
     },
     async deleteBudget(id) { await this.api(`/api/budgets/${id}`, { method: 'DELETE' }); this.loadBudgets(); },
+    async openBudgetDrill(b) {
+      this.budgetDrill = { open: true, budget: b, txns: [], loading: true };
+      // Use dashMonth/dashYear from dashboard context if we're on the dashboard, else budgetMonth/budgetYear
+      const month = this.page === 'dashboard' ? this.dashMonth : this.budgetMonth;
+      const year  = this.page === 'dashboard' ? this.dashYear  : this.budgetYear;
+      try {
+        const data = await this.api(`/api/transactions?category_id=${b.category_id}&month=${month}&year=${year}&limit=200&offset=0`);
+        this.budgetDrill.txns = (data.items || data || [])
+          .filter(t => !t.is_credit && !t.is_reimbursable)
+          .sort((a, z) => z.date.localeCompare(a.date));
+      } finally {
+        this.budgetDrill.loading = false;
+      }
+    },
     async addBill() {
       if (!this.newBill.name || !this.newBill.amount) return;
       await this.api('/api/bills', { method: 'POST', body: JSON.stringify({
@@ -7899,6 +8185,35 @@ function app() {
     async deleteBill(id) {
       if (!confirm('Delete this bill?')) return;
       await this.api(`/api/bills/${id}`, { method: 'DELETE' }); this.loadBills();
+    },
+    async predictBillDueDates() {
+      this.billPredictLoading = true;
+      try {
+        // Run detect-recurring first to refresh patterns, then predict
+        await this.api('/api/bills/detect-recurring', { method: 'POST' });
+        const data = await this.api('/api/bills/predict-due-dates');
+        this.billPredictions = data.predictions || [];
+      } finally {
+        this.billPredictLoading = false;
+      }
+    },
+    async applyBillPrediction(pred) {
+      if (!pred) return;
+      await this.api('/api/bills/apply-predicted-due', {
+        method: 'POST',
+        body: JSON.stringify({ bill_ids: [{ bill_id: pred.bill_id, predicted_next_due: pred.predicted_next_due, frequency: pred.frequency }] }),
+      });
+      this.billPredictions = this.billPredictions.filter(p => p.bill_id !== pred.bill_id);
+      this.loadBills();
+    },
+    async applyAllBillPredictions() {
+      if (!this.billPredictions.length) return;
+      await this.api('/api/bills/apply-predicted-due', {
+        method: 'POST',
+        body: JSON.stringify({ bill_ids: this.billPredictions.map(p => ({ bill_id: p.bill_id, predicted_next_due: p.predicted_next_due, frequency: p.frequency })) }),
+      });
+      this.billPredictions = [];
+      this.loadBills();
     },
     async detectRecurring() {
       const data = await this.api('/api/bills/detect-recurring', { method: 'POST' });

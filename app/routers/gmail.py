@@ -18,8 +18,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import Account, Category, Setting, Transaction, engine, get_session
-from deps import get_setting
+from database import Account, Category, Setting, Transaction, engine, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/gmail", tags=["gmail"])
 
@@ -336,7 +336,9 @@ def _extract_transactions_from_emails(emails: list[dict], provider: str, api_key
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
-RECEIPTS_DIR = "/config/finance_tracker/receipts"
+import os as _os_gmail
+_DATA_DIR_GMAIL = _os_gmail.environ.get("FINANCE_DATA_DIR", "/data")
+RECEIPTS_DIR = _os_gmail.path.join(_DATA_DIR_GMAIL, "receipts")
 
 _STOP_WORDS = {
     "the", "and", "for", "with", "from", "your", "you", "our", "via",
@@ -362,6 +364,7 @@ def _find_matching_txn(
     amount: float,
     txn_date: date,
     description: str,
+    user_id: int,
 ) -> Optional[Transaction]:
     """
     Find an existing transaction matching amount (±2%), date (±3 days),
@@ -375,6 +378,7 @@ def _find_matching_txn(
 
     candidates = session.exec(
         select(Transaction).where(
+            Transaction.user_id == user_id,
             Transaction.date >= lo,
             Transaction.date <= hi,
             Transaction.is_credit == False,
@@ -410,7 +414,10 @@ class CorrelateRequest(BaseModel):
 
 
 @router.get("/test")
-def test_gmail_connection(session: Session = Depends(get_session)):
+def test_gmail_connection(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Test Gmail IMAP connection with saved credentials."""
     email_addr = get_setting(session, "gmail_address") or ""
     app_password = get_setting(session, "gmail_app_password") or ""
@@ -428,7 +435,11 @@ def test_gmail_connection(session: Session = Depends(get_session)):
 
 
 @router.post("/scan")
-def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
+def scan_gmail(
+    body: ScanRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """Scan Gmail for receipt emails and extract transactions."""
     email_addr = get_setting(session, "gmail_address") or ""
     app_password = get_setting(session, "gmail_app_password") or ""
@@ -446,10 +457,12 @@ def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
     if not api_key:
         raise HTTPException(400, f"{key_name} API key not configured. Add it in Settings.")
 
-    # Determine account to import to
+    # Determine account to import to (only consider accounts owned by this user)
     account_id = body.account_id
     if not account_id:
-        first_account = session.exec(select(Account)).first()
+        first_account = session.exec(
+            select(Account).where(Account.user_id == current_user.id)
+        ).first()
         if first_account:
             account_id = first_account.id
 
@@ -498,7 +511,7 @@ def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
     uncat = next((c for c in categories if c.name == "Uncategorised"), None)
 
     # Ensure receipt directory exists
-    receipt_dir = "/config/finance_tracker/receipts/gmail"
+    receipt_dir = _os_gmail.path.join(_DATA_DIR_GMAIL, "receipts", "gmail")
     os.makedirs(receipt_dir, exist_ok=True)
 
     # Build email body lookup by message_id
@@ -511,9 +524,12 @@ def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
             (item.get("message_id", "") + str(item.get("amount", "")) + item.get("date", "")).encode()
         ).hexdigest()
 
-        # Dedup
+        # Dedup (scoped to this user)
         exists = session.exec(
-            select(Transaction).where(Transaction.raw_hash == raw_hash)
+            select(Transaction).where(
+                Transaction.raw_hash == raw_hash,
+                Transaction.user_id == current_user.id,
+            )
         ).first()
         if exists:
             skipped += 1
@@ -566,6 +582,7 @@ def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
             notes=item.get("notes"),
             receipt_path=receipt_path,
             raw_hash=raw_hash,
+            user_id=current_user.id,
         )
         session.add(txn)
         imported += 1
@@ -590,7 +607,11 @@ def scan_gmail(body: ScanRequest, session: Session = Depends(get_session)):
 
 
 @router.post("/correlate")
-def correlate_receipts(body: CorrelateRequest, session: Session = Depends(get_session)):
+def correlate_receipts(
+    body: CorrelateRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Scan Gmail for receipt emails and match them to existing transactions.
     For each match, saves the email as an HTML receipt file and attaches it.
@@ -649,7 +670,9 @@ def correlate_receipts(body: CorrelateRequest, session: Session = Depends(get_se
             unmatched.append({"reason": "no amount", **_item_summary(item)})
             continue
 
-        txn = _find_matching_txn(session, amount, txn_date, item.get("description", ""))
+        txn = _find_matching_txn(
+            session, amount, txn_date, item.get("description", ""), current_user.id
+        )
 
         if not txn:
             unmatched.append({"reason": "no transaction match", **_item_summary(item)})

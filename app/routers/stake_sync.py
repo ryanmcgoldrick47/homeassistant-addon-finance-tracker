@@ -9,8 +9,8 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
-from database import ShareHolding, get_session
-from deps import get_setting
+from database import ShareHolding, get_session, User
+from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/investments", tags=["stake"])
 
@@ -31,11 +31,13 @@ async def _aud_per_usd() -> float:
 
 
 def _upsert_holding(session: Session, ticker: str, name: str, qty: float,
-                    avg_cost_aud: float, price_aud: float, broker: str) -> ShareHolding:
+                    avg_cost_aud: float, price_aud: float, broker: str,
+                    user_id: int) -> ShareHolding:
     h = session.exec(
         select(ShareHolding).where(
             ShareHolding.ticker == ticker,
             ShareHolding.broker == broker,
+            ShareHolding.user_id == user_id,
         )
     ).first()
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
@@ -61,13 +63,17 @@ def _upsert_holding(session: Session, ticker: str, name: str, qty: float,
             value_aud=value, cost_basis_aud=cost_basis,
             gain_aud=gain, gain_pct=gain_pct,
             currency="AUD", broker=broker, price_fetched_at=now,
+            user_id=user_id,
         )
     session.add(h)
     return h
 
 
 @router.post("/stake-sync")
-async def sync_stake(session: Session = Depends(get_session)):
+async def sync_stake(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     """
     Sync Stake portfolio (US + ASX) into ShareHolding via stake-python.
     Requires stake_session_token in Settings (copy from browser DevTools).
@@ -120,6 +126,7 @@ async def sync_stake(session: Session = Depends(get_session)):
                     _upsert_holding(
                         session, ticker, pos.name, qty,
                         avg_cost_aud, price_aud, broker,
+                        current_user.id,
                     )
                     synced.append({
                         "ticker": ticker, "name": pos.name,
@@ -145,10 +152,16 @@ async def sync_stake(session: Session = Depends(get_session)):
 
 
 @router.get("/stake-status")
-def stake_status(session: Session = Depends(get_session)):
+def stake_status(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
     token = get_setting(session, "stake_session_token", "")
     holdings = session.exec(
-        select(ShareHolding).where(ShareHolding.broker.in_(["stake_us", "stake_asx"]))
+        select(ShareHolding).where(
+            ShareHolding.broker.in_(["stake_us", "stake_asx"]),
+            ShareHolding.user_id == current_user.id,
+        )
     ).all()
     return {
         "configured": bool(token),
