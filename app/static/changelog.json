@@ -1,6 +1,16 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v29",
+    "title": "Wizard Layout Fix + PDF Viewer",
+    "items": [
+      "Setup wizard: all 10 steps now use Alpine x-if (not x-show) so hidden steps are absent from DOM — fixes blank space at top of wizard page",
+      "Page navigation now scrolls page-content to top on every page change (fixes scroll position being preserved from previous page)",
+      "PDF viewer: replaced <embed> with <iframe> inside x-if template — browser creates iframe fresh each time, fixing PDF not rendering in modal"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v28",
     "title": "Setup Wizard + PDF Viewer Fix",
     "items": [

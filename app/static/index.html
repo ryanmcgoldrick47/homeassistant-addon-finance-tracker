@@ -6314,7 +6314,7 @@
   <div>
 
       <!-- ── Step 0: Welcome ── -->
-      <div x-show="wizardStep === 0" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
+      <template x-if="wizardStep === 0"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 translate-y-4" x-transition:enter-end="opacity-100 translate-y-0">
         <div style="font-size:56px;text-align:center;margin-bottom:20px;">👋</div>
         <h1 style="font-size:28px;font-weight:700;text-align:center;margin:0 0 12px;color:var(--text);">Welcome to Finance Tracker</h1>
         <p style="font-size:15px;color:var(--muted);text-align:center;line-height:1.65;margin:0 0 28px;">This short guide walks you through the basics — from adding your bank account to setting up your first budget. Most steps are optional and take under a minute.</p>
@@ -6328,10 +6328,10 @@
           </div>
         </div>
         <div style="text-align:center;font-size:12px;color:var(--muted);">All your data stays on your own Home Assistant instance — nothing leaves your home.</div>
-      </div>
+      </div></template>
 
       <!-- ── Step 1: Profile ── -->
-      <div x-show="wizardStep === 1" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 1"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🙋</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Tell us about yourself</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Personalises your ABS spending benchmarks and tax estimates. All optional.</p>
@@ -6364,10 +6364,10 @@
             </div>
           </div>
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 2: Income type ── -->
-      <div x-show="wizardStep === 2" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 2"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">💼</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">How do you earn income?</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Helps auto-flag tax deductions as you import transactions. Select all that apply.</p>
@@ -6382,10 +6382,10 @@
             </div>
           </template>
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 3: Bank account ── -->
-      <div x-show="wizardStep === 3" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 3"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🏦</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Add your first bank account</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">This tags your imported transactions. You can add more accounts later from the Import page.</p>
@@ -6410,10 +6410,10 @@
         <div x-show="wizardAccountCreated" style="display:flex;align-items:center;gap:8px;background:var(--surf2);border:1px solid var(--green);border-radius:10px;padding:11px 14px;margin-top:14px;font-size:13px;color:var(--green);">
           ✓ Account "<span x-text="wizardAccountCreated?.name"></span>" created successfully.
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 4: Import CSV ── -->
-      <div x-show="wizardStep === 4" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 4"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">📥</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Import your transactions</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 20px;line-height:1.6;">Export a CSV from your bank's internet banking and drop it here. Most Australian banks are supported.</p>
@@ -6448,10 +6448,10 @@
           <div x-show="(wizardImportResult?.errors?.length||0) > 0" style="font-size:12px;color:var(--amber);margin-top:4px;" x-text="(wizardImportResult?.errors?.length||0) + ' row(s) could not be parsed'"></div>
           <button @click="wizardImportResult=null" class="btn btn-ghost btn-sm" style="margin-top:10px;">Import another file</button>
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 5: Bills ── -->
-      <div x-show="wizardStep === 5" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 5"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">📅</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Any regular bills?</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Track subscriptions and bills so you always know what's coming up — with reminders before they're due.</p>
@@ -6483,10 +6483,10 @@
           <div style="font-size:13px;color:var(--muted);">Add more bills anytime from the Bills page. You can also auto-detect recurring payments from your transaction history using "Predict Due Dates".</div>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-top:16px;line-height:1.5;padding:12px;background:var(--surf2);border-radius:10px;">💡 <strong>Tip:</strong> If you imported transactions, head to the Bills page after setup and tap <em>Predict Due Dates</em> — it'll find your recurring payments automatically.</div>
-      </div>
+      </div></template>
 
       <!-- ── Step 6: Savings goal ── -->
-      <div x-show="wizardStep === 6" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 6"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🎯</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">What are you saving for?</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Set a target and track your progress. Every contribution counts towards the goal.</p>
@@ -6509,10 +6509,10 @@
           <div style="font-size:15px;font-weight:600;color:var(--green);margin-bottom:4px;">✓ Goal created</div>
           <div style="font-size:13px;color:var(--muted);">Track progress and add contributions from the Goals page.</div>
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 7: AI features ── -->
-      <div x-show="wizardStep === 7" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 7"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🤖</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Enable AI features</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">A Claude API key unlocks the chat assistant, payslip auto-extraction, and merchant name enrichment.</p>
@@ -6536,10 +6536,10 @@
           </div>
         </div>
         <div style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5;">💡 Gemini (Google) is also supported as an alternative AI provider — configure it in Settings after setup.</div>
-      </div>
+      </div></template>
 
       <!-- ── Step 8: Notifications ── -->
-      <div x-show="wizardStep === 8" x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <template x-if="wizardStep === 8"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🔔</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Get push notifications</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Receive alerts on your phone when bills are due, budgets hit their limit, and your weekly summary is ready.</p>
@@ -6560,10 +6560,10 @@
             </div>
           </div>
         </div>
-      </div>
+      </div></template>
 
       <!-- ── Step 9: Done ── -->
-      <div x-show="wizardStep === 9" x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
+      <template x-if="wizardStep === 9"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
         <div style="font-size:64px;text-align:center;margin-bottom:20px;">🎉</div>
         <h2 style="font-size:28px;font-weight:700;text-align:center;margin:0 0 8px;">You're all set!</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Here's a summary of what you've configured. You can change anything in Settings at any time.</p>
@@ -6586,7 +6586,7 @@
             </button>
           </template>
         </div>
-      </div>
+      </div></template>
 
   </div>
 
@@ -6620,11 +6620,10 @@
   <div x-show="pdfModal.loading" style="flex:1;display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--muted);">
     Loading PDF…
   </div>
-  <!-- PDF embed — renders inline, no new tab, bypasses all popup blockers -->
-  <embed x-show="pdfModal.url && !pdfModal.loading"
-         :src="pdfModal.url"
-         type="application/pdf"
-         style="flex:1;width:100%;border:none;">
+  <!-- PDF iframe — x-if creates it fresh each time (embed reinit not reliable) -->
+  <template x-if="pdfModal.url && !pdfModal.loading">
+    <iframe :src="pdfModal.url" style="flex:1;width:100%;border:none;"></iframe>
+  </template>
 </div>
 
 <!-- ═══ CHAT WIDGET ═══ -->
@@ -8218,7 +8217,10 @@ function app() {
     async init() {
       this.initChatFabPos();
       this.loadPetLog();
-      this.$watch('page', val => { if (val === 'pet') this.loadPet(); });
+      this.$watch('page', val => {
+        if (val === 'pet') this.loadPet();
+        document.querySelector('.page-content')?.scrollTo({ top: 0 });
+      });
       // Validate existing token / auto-login
       if (this.token) {
         try {
