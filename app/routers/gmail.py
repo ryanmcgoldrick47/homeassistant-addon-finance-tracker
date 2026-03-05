@@ -541,9 +541,10 @@ def _extract_transactions_from_emails(emails: list[dict], provider: str, api_key
 
 # ── Core scan logic ───────────────────────────────────────────────────────────
 
-async def _run_gmail_scan(session: Session, user_id: int) -> dict:
+async def _run_gmail_scan(session: Session, user_id: int, override_since: str | None = None) -> dict:
     """
     Core scan logic: process payslip label and expense label.
+    override_since: ISO date string (YYYY-MM-DD) to scan from a specific date regardless of last_scan.
     Returns a summary dict. Called by both the HTTP endpoint and the background scheduler.
     """
     email_addr = get_setting(session, "gmail_address") or ""
@@ -558,16 +559,22 @@ async def _run_gmail_scan(session: Session, user_id: int) -> dict:
     if not payslip_label and not expense_label:
         return {"ok": False, "reason": "No Gmail labels configured. Set gmail_payslip_label and/or gmail_expense_label in Settings."}
 
-    # Scan since last run minus 1 day buffer, or 30 days if never run
-    last_scan = get_setting(session, "gmail_last_scan") or ""
-    if last_scan:
+    # Determine since_date: explicit override > last_scan - 1d > 30d fallback
+    if override_since:
         try:
-            since_dt = datetime.fromisoformat(last_scan) - timedelta(days=1)
-            since_date = since_dt.strftime("%d-%b-%Y")
+            since_date = datetime.fromisoformat(override_since).strftime("%d-%b-%Y")
         except Exception:
             since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
     else:
-        since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
+        last_scan = get_setting(session, "gmail_last_scan") or ""
+        if last_scan:
+            try:
+                since_dt = datetime.fromisoformat(last_scan) - timedelta(days=1)
+                since_date = since_dt.strftime("%d-%b-%Y")
+            except Exception:
+                since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
+        else:
+            since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
 
     results: dict = {
         "payslips": {"processed": 0, "skipped": 0, "errors": []},
@@ -575,10 +582,16 @@ async def _run_gmail_scan(session: Session, user_id: int) -> dict:
         "since_date": since_date,
     }
 
-    # ── 1. Payslip label ──────────────────────────────────────────────────────
-    if payslip_label:
+    # ── 1. Payslip labels (comma-separated) ──────────────────────────────────
+    payslip_labels = [l.strip() for l in payslip_label.split(",") if l.strip()]
+    if payslip_labels:
         try:
-            emails = _fetch_emails_from_label(email_addr, app_password, payslip_label, since_date)
+            emails = []
+            for lbl in payslip_labels:
+                emails += _fetch_emails_from_label(email_addr, app_password, lbl, since_date)
+            # Deduplicate by message_id across labels
+            seen = set()
+            emails = [e for e in emails if e["message_id"] not in seen and not seen.add(e["message_id"])]
             for em in emails:
                 for att in em["attachments"]:
                     if att["ext"] == "pdf":
@@ -596,10 +609,15 @@ async def _run_gmail_scan(session: Session, user_id: int) -> dict:
         except Exception as e:
             results["payslips"]["errors"].append(str(e))
 
-    # ── 2. Expense/receipt label ──────────────────────────────────────────────
-    if expense_label:
+    # ── 2. Expense/receipt labels (comma-separated) ───────────────────────────
+    expense_labels = [l.strip() for l in expense_label.split(",") if l.strip()]
+    if expense_labels:
         try:
-            emails = _fetch_emails_from_label(email_addr, app_password, expense_label, since_date)
+            emails = []
+            for lbl in expense_labels:
+                emails += _fetch_emails_from_label(email_addr, app_password, lbl, since_date)
+            seen2 = set()
+            emails = [e for e in emails if e["message_id"] not in seen2 and not seen2.add(e["message_id"])]
 
             provider = get_setting(session, "ai_provider") or "gemini"
             if provider == "gemini":
@@ -803,17 +821,23 @@ def gmail_scan_status(
     }
 
 
+class AutoScanRequest(BaseModel):
+    since_date: Optional[str] = None  # ISO date YYYY-MM-DD; if omitted, uses last_scan logic
+
+
 @router.post("/auto-scan")
 async def auto_scan_gmail(
+    body: AutoScanRequest = AutoScanRequest(),
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
     """
     Scan configured Gmail labels and import payslips + expense transactions.
+    Pass since_date (YYYY-MM-DD) to override the normal last-scan-based window.
     Payslip PDFs are saved as original files and parsed via AI.
     Receipt attachments are saved as original files and linked to transactions.
     """
-    result = await _run_gmail_scan(session, current_user.id)
+    result = await _run_gmail_scan(session, current_user.id, override_since=body.since_date)
     return result
 
 

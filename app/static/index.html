@@ -4672,13 +4672,13 @@
               </div>
               <div>
                 <label class="form-label">Payslip Label</label>
-                <input type="text" x-model="settings.gmail_payslip_label" placeholder="e.g. payslips/payslip 25/26" autocomplete="off" />
-                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Gmail label containing payslip emails. PDF attachments are saved as original files and parsed automatically.</p>
+                <input type="text" x-model="settings.gmail_payslip_label" placeholder="e.g. payslips/payslip 25/26, payslips/payslip 24/25" autocomplete="off" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Comma-separated Gmail labels. PDF attachments saved as originals and parsed via AI. Use multiple labels to scan across financial years.</p>
               </div>
               <div>
-                <label class="form-label">Expense / Receipt Label</label>
-                <input type="text" x-model="settings.gmail_expense_label" placeholder="e.g. receipts/Expenses 25/26" autocomplete="off" />
-                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Gmail label containing expense and receipt emails. PDF/image attachments saved as originals; email body parsed for transaction amount.</p>
+                <label class="form-label">Expense / Receipt Labels</label>
+                <input type="text" x-model="settings.gmail_expense_label" placeholder="e.g. receipts/Expenses 25/26, receipts/expenses 24/25" autocomplete="off" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Comma-separated Gmail labels. PDF/image attachments saved as originals; email body parsed for transaction amount.</p>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border-radius:10px;">
                 <div>
@@ -4693,14 +4693,20 @@
                   Enabled
                 </label>
               </div>
-              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                 <button @click="testGmailConnection()" class="btn btn-ghost btn-sm">Test Connection</button>
-                <button @click="gmailAutoScan()" class="btn btn-ghost btn-sm" :disabled="gmailScanning">
+                <button @click="gmailAutoScan(null)" class="btn btn-ghost btn-sm" :disabled="gmailScanning">
                   <span x-show="!gmailScanning">Scan Now</span>
                   <span x-show="gmailScanning">Scanning...</span>
                 </button>
                 <span x-show="gmailScanResult" style="font-size:12px;color:var(--green);align-self:center;" x-text="gmailScanResult"></span>
                 <span x-show="gmailScanError" style="font-size:12px;color:var(--red);align-self:center;" x-text="gmailScanError"></span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--surf2);border-radius:10px;">
+                <div style="font-size:12px;color:var(--muted);flex-shrink:0;">Historical scan from:</div>
+                <input type="date" x-model="gmailHistoricalDate" style="flex:1;min-width:120px;padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;" />
+                <button @click="gmailAutoScan(gmailHistoricalDate)" class="btn btn-ghost btn-sm" :disabled="gmailScanning || !gmailHistoricalDate">Scan from date</button>
+                <div style="font-size:11px;color:var(--muted);width:100%;">Use this for first-time setup or to backfill a financial year (e.g. 2024-07-01 for FY24/25)</div>
               </div>
             </div>
           </div>
@@ -6656,13 +6662,13 @@
           </div>
           <div>
             <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Payslip label</label>
-            <input type="text" x-model="wizardData.gmailPayslipLabel" placeholder="e.g. payslips/payslip 25/26" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;">PDF attachments are saved as originals and parsed via AI</div>
+            <input type="text" x-model="wizardData.gmailPayslipLabel" placeholder="e.g. payslips/payslip 25/26, payslips/payslip 24/25" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Comma-separated — add multiple labels to cover multiple financial years</div>
           </div>
           <div>
-            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Expense / receipt label</label>
-            <input type="text" x-model="wizardData.gmailExpenseLabel" placeholder="e.g. receipts/Expenses 25/26" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
-            <div style="font-size:11px;color:var(--muted);margin-top:4px;">PDF/image attachments saved; email body parsed for transaction amount</div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Expense / receipt labels</label>
+            <input type="text" x-model="wizardData.gmailExpenseLabel" placeholder="e.g. receipts/Expenses 25/26, receipts/expenses 24/25" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">Comma-separated — include all financial years you want to import</div>
           </div>
           <div x-show="wizardData.gmailPayslipLabel || wizardData.gmailExpenseLabel" style="font-size:12px;color:var(--amber);padding:10px 12px;background:rgba(245,158,11,.08);border-radius:8px;">
             Make sure your Gmail address and App Password are already saved in Settings → Gmail Integration.
@@ -7126,6 +7132,7 @@ function app() {
     gmailScanStatus: null,
     gmailScanResult: '',
     gmailScanError: '',
+    gmailHistoricalDate: '2024-07-01',
     enriching: false,
     enrichResult: null,
     zbbSummary: null,
@@ -9735,10 +9742,11 @@ function app() {
       } catch { this.gmailScanStatus = null; }
     },
 
-    async gmailAutoScan() {
+    async gmailAutoScan(sinceDate = null) {
       this.gmailScanResult = ''; this.gmailScanError = ''; this.gmailScanning = true;
       try {
-        const data = await this.api('/api/gmail/auto-scan', { method: 'POST' });
+        const body = sinceDate ? { since_date: sinceDate } : {};
+        const data = await this.api('/api/gmail/auto-scan', { method: 'POST', body: JSON.stringify(body) });
         if (!data.ok) {
           this.gmailScanError = data.reason || 'Scan failed';
         } else {
