@@ -8100,23 +8100,22 @@ function app() {
     },
 
     async viewPayslipPdf(payslipId, name) {
-      // Request a short-lived server-side view token, then point the iframe at the
-      // token URL directly — no blob: URL, so Brave/Chrome shields can't block it.
-      this.pdfModal = { open: true, url: null, loading: true, name: name || `Payslip #${payslipId}` };
+      // Open new tab synchronously inside the user gesture (before any await) so
+      // Brave/Chrome pop-up blocker and shield don't fire. Then navigate it to the
+      // server-issued token URL after the API responds.
+      const win = window.open('', '_blank');
       const BASE = window.FINANCE_BASE || '';
       try {
         const res = await this.api(`/api/payslips/${payslipId}/pdf-view`, { method: 'POST' });
-        if (!res?.view_path) {
-          this.pdfModal.open = false;
+        if (res?.view_path) {
+          win.location.href = BASE + res.view_path;
+        } else {
+          win.close();
           this.showToast('Could not generate PDF link', 4000);
-          return;
         }
-        this.pdfModal.url = BASE + res.view_path;
       } catch(e) {
-        this.pdfModal.open = false;
+        win?.close();
         this.showToast('Error loading PDF: ' + e.message, 5000);
-      } finally {
-        this.pdfModal.loading = false;
       }
     },
     closePdfModal() {

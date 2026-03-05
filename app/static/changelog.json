@@ -1,9 +1,10 @@
 [
   {
     "date": "2026-03-05",
-    "version": "v32",
-    "title": "Setup Wizard Fix + Service Worker Cache Bust",
+    "version": "v33",
+    "title": "PDF New-Tab Fix + Setup Wizard Overlay",
     "items": [
+      "Payslip PDF: 'View PDF' now opens a new tab synchronously (before the async API call) — Brave/Chrome cannot block it as a pop-up",
       "Setup wizard: now renders as a full-screen fixed overlay (z-index 50) — no more blank space or bottom-of-page positioning",
       "Service worker: cache bumped from ft-v1 to ft-v31 — forces all browsers to discard stale cached HTML and fetch fresh content"
     ]
