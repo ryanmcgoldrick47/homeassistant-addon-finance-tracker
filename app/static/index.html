@@ -4977,8 +4977,8 @@
   <button class="bottom-nav-item" :class="page==='transactions'?'active':''" @click="page='transactions'; moreOpen=false">
     <span class="bni">💳</span><span>Txns</span>
   </button>
-  <button class="bottom-nav-item" :class="page==='import'?'active':''" @click="page='import'; moreOpen=false">
-    <span class="bni">📥</span><span>Import</span>
+  <button class="bottom-nav-item" :class="page==='chathistory'?'active':''" @click="page='chathistory'; moreOpen=false">
+    <span class="bni">💬</span><span>Chat</span>
   </button>
   <button class="bottom-nav-item" :class="page==='bills'?'active':''" @click="page='bills'; moreOpen=false">
     <span class="bni" style="position:relative;">📅
@@ -5001,6 +5001,9 @@
 <div x-show="moreOpen" x-cloak class="more-sheet">
   <div style="width:40px;height:4px;background:var(--border);border-radius:99px;margin:0 auto 12px;"></div>
   <div class="more-grid">
+    <button class="more-item" @click="page='import'; moreOpen=false">
+      <span>📥</span><span>Import</span>
+    </button>
     <button class="more-item" @click="page='tax'; moreOpen=false">
       <span>🧾</span><span>Tax</span>
     </button>
@@ -5047,9 +5050,6 @@
     </button>
     <button class="more-item" @click="page='pet'; moreOpen=false">
       <span>🐾</span><span>Finance Pet</span>
-    </button>
-    <button class="more-item" @click="page='chathistory'; loadChatConversations(); moreOpen=false">
-      <span>💬</span><span>Chat History</span>
     </button>
     <button class="more-item" @click="page='settings'; moreOpen=false">
       <span>⚙️</span><span>Settings</span>
@@ -6296,6 +6296,7 @@ function app() {
       { id: 'goals', label: 'Goals', icon: '🎯' },
       { id: 'reports', label: 'Reports', icon: '📋' },
       { id: 'pulse', label: 'Market Pulse', icon: '📡' },
+      { id: 'chathistory', label: 'Chat History', icon: '💬' },
     ],
 
     // Data
