@@ -8065,6 +8065,14 @@ function app() {
     },
 
     async viewPayslipPdf(payslipId) {
+      // window.open MUST be called synchronously (before any await) to stay within
+      // the user gesture — Brave/Chrome block popups opened after async work.
+      const win = window.open('', '_blank');
+      if (!win) {
+        this.showToast('Popup blocked — allow popups for this site in browser settings', 5000);
+        return;
+      }
+      win.document.write('<html><body style="margin:0;background:#050c1a;color:#dde8f5;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;font-size:16px;">Loading PDF\u2026</body></html>');
       const BASE = window.FINANCE_BASE || '';
       try {
         const res = await fetch(BASE + `/api/payslips/${payslipId}/pdf`, {
@@ -8072,17 +8080,14 @@ function app() {
         });
         if (!res.ok) {
           const err = await res.json().catch(() => ({}));
+          win.close();
           this.showToast('Error: ' + (err.detail || 'Could not load PDF'), 5000);
           return;
         }
         const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url; a.target = '_blank'; a.rel = 'noopener';
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
+        win.location.href = URL.createObjectURL(blob);
       } catch(e) {
+        win.close();
         this.showToast('Error loading PDF: ' + e.message, 5000);
       }
     },
