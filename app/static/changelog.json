@@ -1,6 +1,20 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v36",
+    "title": "Gmail Smart Import — Payslips + Receipts",
+    "items": [
+      "Gmail integration rebuilt: PDF and image attachments now extracted as original binary files, not text reconstructions",
+      "Payslip label: PDF attachments routed to AI payslip parser — saved to /data/payslips/ and appear on Payslips page with View/Download",
+      "Expense label: PDF/image attachments saved as originals in /data/receipts/gmail/ and linked to transactions",
+      "Daily auto-scan: Finance Tracker scans configured labels every 24 hours automatically (no HA automation needed)",
+      "Settings: new Payslip Label and Expense Label fields + last scan timestamp + manual Scan Now button",
+      "Setup wizard: new Gmail step (step 9) to configure labels during onboarding",
+      "New GET /api/gmail/status and POST /api/gmail/auto-scan endpoints"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v35",
     "title": "Data Currency Dashboard Card",
     "items": [

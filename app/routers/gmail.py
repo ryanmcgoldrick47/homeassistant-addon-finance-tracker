@@ -1,4 +1,4 @@
-"""Gmail IMAP scanner — extracts expense transactions from receipt emails using Claude."""
+"""Gmail IMAP scanner — extracts expense transactions and payslips from labelled emails."""
 from __future__ import annotations
 
 import concurrent.futures
@@ -18,11 +18,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import Account, Category, Setting, Transaction, engine, get_session, User
-from deps import get_setting, get_current_user
+from database import Account, Category, Setting, Transaction, Payslip, engine, get_session, User
+from deps import get_setting, set_setting, get_current_user
 
 router = APIRouter(prefix="/api/gmail", tags=["gmail"])
 
+_DATA_DIR = os.environ.get("FINANCE_DATA_DIR", "/data")
 
 # ── HTML → plain text ────────────────────────────────────────────────────────
 
@@ -95,6 +96,54 @@ def _get_email_text(msg: email.message.Message) -> str:
     return ""
 
 
+def _get_attachments(msg: email.message.Message) -> list[dict]:
+    """Extract binary attachments (PDF, images) from a MIME message."""
+    attachments = []
+    if not msg.is_multipart():
+        return attachments
+    for part in msg.walk():
+        content_type = part.get_content_type()
+        disposition = str(part.get("Content-Disposition") or "")
+        filename = part.get_filename()
+        if filename:
+            filename = _decode_header_value(filename)
+
+        # Accept PDFs and images — either by content-type or file extension
+        is_pdf = (content_type == "application/pdf" or
+                  (filename or "").lower().endswith(".pdf"))
+        is_image = content_type.startswith("image/")
+        is_octet = content_type in ("application/octet-stream",) and (
+            (filename or "").lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".gif", ".webp"))
+        )
+
+        if not (is_pdf or is_image or is_octet):
+            continue
+        if "inline" in disposition.lower() and not filename:
+            continue  # skip inline images with no name (tracking pixels etc.)
+
+        try:
+            data = part.get_payload(decode=True)
+            if data and len(data) > 100:  # ignore tiny garbage attachments
+                ext = ""
+                if filename and "." in filename:
+                    ext = filename.rsplit(".", 1)[-1].lower()
+                elif is_pdf:
+                    ext = "pdf"
+                elif is_image:
+                    ext = content_type.split("/")[-1]
+                else:
+                    ext = "bin"
+                attachments.append({
+                    "filename": filename or f"attachment.{ext}",
+                    "content_type": content_type,
+                    "ext": ext,
+                    "data": data,
+                })
+        except Exception:
+            pass
+    return attachments
+
+
 # ── IMAP helpers ─────────────────────────────────────────────────────────────
 
 RECEIPT_KEYWORDS = [
@@ -103,109 +152,96 @@ RECEIPT_KEYWORDS = [
     "statement", "subscription", "renewal", "charged", "transaction",
 ]
 
-# ── Australian tax rules ──────────────────────────────────────────────────────
-
-# Categories that are ALWAYS deductible for any income type
-_ALWAYS_DEDUCTIBLE = {"donations", "investment fees"}
-
-# Categories deductible for PAYG employees (ATO work-related expense rules)
-_EMPLOYEE_DEDUCTIBLE = {
-    "work equipment", "self-education", "internet & phone",
-    "work-related car expenses", "work-related travel expenses",
-    "work-related clothing expenses", "work-related self-education",
-    "other work-related deductions",
-}
-
-# Categories deductible for sole traders / ABN holders
-_SOLE_TRADER_DEDUCTIBLE = {
-    "sole trader expenses", "work equipment", "self-education",
-    "internet & phone", "utilities", "subscriptions",
-    "advertising", "accounting", "insurance",
-}
-
-# Categories deductible for investors
-_INVESTOR_DEDUCTIBLE = {"investment fees", "subscriptions"}
-
-# Categories that MIGHT be deductible — flag for review
-_REVIEW_CATEGORIES = {
-    "internet & phone", "subscriptions", "transport",
-    "home & garden", "utilities",
-}
-
-def _build_tax_rules(occupation: str, income_types: str) -> dict:
-    types_set = {t.strip().lower() for t in income_types.split(",")} if income_types else set()
-    deductible = set(_ALWAYS_DEDUCTIBLE)
-    if "employee" in types_set or not types_set:
-        deductible |= _EMPLOYEE_DEDUCTIBLE
-    if "sole_trader" in types_set:
-        deductible |= _SOLE_TRADER_DEDUCTIBLE
-    if "investor" in types_set:
-        deductible |= _INVESTOR_DEDUCTIBLE
-    return {"deductible_categories": deductible, "income_types": types_set, "occupation": occupation}
-
-
-def _apply_tax_rules(category: str, description: str, ai_deductible: bool, ai_tax_cat: Optional[str], rules: dict) -> dict:
-    """Return deductible flag, tax_category, and needs_review flag."""
-    cat_lower = category.lower()
-    desc_lower = description.lower()
-    deductible_cats = rules["deductible_categories"]
-
-    # Rule-based deductibility
-    rule_deductible = cat_lower in deductible_cats
-    # Combine: deductible if either AI or rules say so
-    deductible = ai_deductible or rule_deductible
-
-    # Assign ATO tax category if not already set
-    tax_category = ai_tax_cat
-    if deductible and not tax_category:
-        if cat_lower in ("work equipment",):
-            tax_category = "Other work-related deductions"
-        elif cat_lower in ("self-education",):
-            tax_category = "Work-related self-education"
-        elif cat_lower in ("internet & phone",):
-            tax_category = "Other work-related deductions"
-        elif cat_lower in ("donations",):
-            tax_category = "Donations"
-        elif cat_lower in ("investment fees",):
-            tax_category = "Investment income deductions"
-        elif cat_lower in ("sole trader expenses",):
-            tax_category = "Sole trader business expenses"
-
-    # Flag for review: borderline categories where user should confirm
-    needs_review = (
-        cat_lower in _REVIEW_CATEGORIES and not ai_deductible
-    ) or (
-        # Subscription > $50 flagged regardless — could be deductible software
-        cat_lower == "subscriptions" and not deductible
-    )
-
-    return {"deductible": deductible, "tax_category": tax_category, "needs_review": needs_review}
+PAYSLIP_SUBJECT_KEYWORDS = [
+    "payslip", "pay slip", "remittance", "payroll", "salary advice",
+    "earnings statement", "wage advice", "pay advice",
+]
 
 
 def _connect_gmail(email_addr: str, app_password: str) -> imaplib.IMAP4_SSL:
     ctx = ssl.create_default_context()
     m = imaplib.IMAP4_SSL("imap.gmail.com", 993, ssl_context=ctx)
-    m.sock.settimeout(20)  # 20s per IMAP read — won't affect other sockets (Gemini etc.)
+    m.sock.settimeout(30)
     m.login(email_addr, app_password)
     return m
 
 
+def _select_label(m: imaplib.IMAP4_SSL, label: str) -> bool:
+    """Try to select a Gmail label as an IMAP folder. Returns True on success."""
+    attempts = [
+        f'"{label}"',          # quoted (handles spaces and slashes)
+        label,                  # unquoted
+        f'"[Gmail]/{label}"',  # with Gmail prefix (shouldn't be needed for user labels)
+    ]
+    for attempt in attempts:
+        try:
+            status, _ = m.select(attempt, readonly=False)
+            if status == "OK":
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _fetch_emails_from_label(
+    email_addr: str, app_password: str, label: str, since_date: str
+) -> list[dict]:
+    """Fetch emails from a specific Gmail label since a given date, including attachments."""
+    m = _connect_gmail(email_addr, app_password)
+
+    if not _select_label(m, label):
+        m.logout()
+        return []
+
+    try:
+        _, data = m.search(None, f'SINCE "{since_date}"')
+        ids = data[0].split() if data[0] else []
+    except Exception:
+        m.logout()
+        return []
+
+    results = []
+    for uid in ids:
+        try:
+            _, msg_data = m.fetch(uid, "(RFC822)")
+            if not msg_data or not msg_data[0]:
+                continue
+            raw = msg_data[0][1]
+            msg = email.message_from_bytes(raw)
+
+            subject = _decode_header_value(msg.get("Subject", ""))
+            sender = _decode_header_value(msg.get("From", ""))
+            date_str = msg.get("Date", "")
+            message_id = msg.get("Message-ID", uid.decode())
+            body = _get_email_text(msg)
+            attachments = _get_attachments(msg)
+
+            results.append({
+                "uid": uid,
+                "message_id": message_id,
+                "subject": subject[:200],
+                "sender": sender[:200],
+                "date_raw": date_str,
+                "body": body,
+                "attachments": attachments,
+            })
+        except Exception:
+            continue
+
+    m.logout()
+    return results
+
+
 def _fetch_receipt_emails(email_addr: str, app_password: str, days: int = 90) -> list[dict]:
-    """Fetch emails that look like receipts from the last N days."""
+    """Legacy: Fetch receipt emails from inbox (kept for /scan endpoint backward compat)."""
     m = _connect_gmail(email_addr, app_password)
 
     since_date = (datetime.now() - timedelta(days=days)).strftime("%d-%b-%Y")
-
-    # Try Gmail X-GM-RAW search on All Mail — filters on Gmail's side so we only
-    # download matching emails, much faster than fetching everything locally.
-    # Falls back to per-folder INBOX search if X-GM-RAW unsupported.
     ids = []
     for folder in ('"[Gmail]/All Mail"', 'INBOX'):
         status, _ = m.select(folder)
         if status != 'OK':
             continue
-
-        # Build a Gmail search query: date + receipt-like subjects
         gm_query = (
             f'after:{(datetime.now() - timedelta(days=days)).strftime("%Y/%m/%d")} '
             f'subject:(receipt OR invoice OR order OR payment OR confirmation OR '
@@ -214,11 +250,9 @@ def _fetch_receipt_emails(email_addr: str, app_password: str, days: int = 90) ->
         try:
             _, data = m.search(None, f'X-GM-RAW "{gm_query}"')
             ids = data[0].split() if data[0] else []
-            break  # X-GM-RAW worked
+            break
         except Exception:
             pass
-
-        # X-GM-RAW not supported — fall back to plain SINCE search
         try:
             _, data = m.search(None, f'SINCE "{since_date}"')
             ids = data[0].split() if data[0] else []
@@ -227,7 +261,7 @@ def _fetch_receipt_emails(email_addr: str, app_password: str, days: int = 90) ->
             continue
 
     results = []
-    for uid in ids[-50:]:  # X-GM-RAW already filtered by subject; 50 is plenty
+    for uid in ids[-50:]:
         try:
             _, msg_data = m.fetch(uid, "(RFC822)")
             if not msg_data or not msg_data[0]:
@@ -256,6 +290,178 @@ def _fetch_receipt_emails(email_addr: str, app_password: str, days: int = 90) ->
 
     m.logout()
     return results
+
+
+# ── Receipt file saving ───────────────────────────────────────────────────────
+
+def _save_receipt_binary(
+    data: bytes, filename: str, ext: str, label_type: str, txn_date: str, description: str
+) -> str:
+    """Save a binary receipt file (PDF or image) and return the saved path."""
+    receipt_dir = os.path.join(_DATA_DIR, "receipts", "gmail")
+    os.makedirs(receipt_dir, exist_ok=True)
+    safe_desc = re.sub(r"[^\w\-]", "_", description)[:40]
+    safe_date = re.sub(r"[^\w\-]", "_", txn_date)[:10]
+    h = hashlib.md5(data).hexdigest()[:6]
+    dest_filename = f"{safe_date}_{safe_desc}_{h}.{ext}"
+    dest = os.path.join(receipt_dir, dest_filename)
+    with open(dest, "wb") as f:
+        f.write(data)
+    return dest
+
+
+# ── Payslip import from PDF bytes ────────────────────────────────────────────
+
+async def _import_payslip_from_bytes(
+    pdf_bytes: bytes, filename: str, sender: str, session: Session, user_id: int
+) -> dict:
+    """Extract and save a payslip from raw PDF bytes. Returns result dict."""
+    from routers.payslips import _extract_pdf_text, _call_ai_extraction, _check_variations, _save_pdf
+
+    try:
+        text = _extract_pdf_text(pdf_bytes)
+    except Exception as e:
+        return {"ok": False, "error": f"PDF text extraction failed: {e}"}
+
+    if len(text.strip()) < 50:
+        return {"ok": False, "error": "PDF appears to be scanned/image-only — no readable text"}
+
+    try:
+        data = await _call_ai_extraction(text, session)
+    except Exception as e:
+        return {"ok": False, "error": f"AI extraction failed: {e}"}
+
+    pay_date_str = data.get("pay_date")
+    if not pay_date_str:
+        return {"ok": False, "error": "Could not determine pay date from PDF"}
+
+    try:
+        pay_date = date.fromisoformat(pay_date_str)
+    except ValueError:
+        return {"ok": False, "error": f"Invalid pay date: {pay_date_str}"}
+
+    employer = data.get("employer") or _extract_sender_name(sender)
+
+    # Dedup check
+    existing = session.exec(
+        select(Payslip).where(
+            Payslip.user_id == user_id,
+            Payslip.pay_date == pay_date,
+            Payslip.employer == employer,
+        )
+    ).first()
+    if existing:
+        return {"ok": False, "skipped": True, "reason": f"Duplicate: {pay_date} from {employer}"}
+
+    prev = session.exec(
+        select(Payslip).where(
+            Payslip.user_id == user_id,
+            Payslip.pay_date < pay_date,
+        ).order_by(Payslip.pay_date.desc()).limit(1)
+    ).first()
+
+    flags = _check_variations(data, prev)
+
+    def _cents(val): return round((val or 0) * 100)
+
+    payslip = Payslip(
+        pay_date=pay_date,
+        period_start=date.fromisoformat(data["period_start"]) if data.get("period_start") else None,
+        period_end=date.fromisoformat(data["period_end"]) if data.get("period_end") else None,
+        employer=employer,
+        pay_frequency=data.get("pay_frequency"),
+        gross_pay_cents=_cents(data.get("gross_pay")),
+        net_pay_cents=_cents(data.get("net_pay")),
+        tax_withheld_cents=_cents(data.get("tax_withheld")),
+        super_cents=_cents(data.get("super_amount")),
+        annual_leave_hours=data.get("annual_leave_hours"),
+        sick_leave_hours=data.get("sick_leave_hours"),
+        long_service_hours=data.get("long_service_leave_hours"),
+        ytd_gross_cents=_cents(data.get("ytd_gross")) if data.get("ytd_gross") else None,
+        ytd_tax_cents=_cents(data.get("ytd_tax")) if data.get("ytd_tax") else None,
+        ytd_super_cents=_cents(data.get("ytd_super")) if data.get("ytd_super") else None,
+        hours_worked=data.get("hours_worked"),
+        allowances_json=json.dumps(data.get("allowances") or []),
+        deductions_json=json.dumps(data.get("deductions") or []),
+        flags_json=json.dumps(flags),
+        raw_extracted=json.dumps(data),
+        source="gmail",
+        filename=filename,
+        is_reviewed=False,
+        user_id=user_id,
+    )
+    session.add(payslip)
+    session.commit()
+    session.refresh(payslip)
+    _save_pdf(payslip.id, pdf_bytes)
+
+    return {
+        "ok": True,
+        "payslip_id": payslip.id,
+        "pay_date": str(pay_date),
+        "employer": employer,
+        "flags": flags,
+    }
+
+
+def _extract_sender_name(sender: str) -> str:
+    """Pull a clean name from a 'Display Name <email>' string."""
+    m = re.match(r'^"?([^"<]+)"?\s*<', sender)
+    if m:
+        return m.group(1).strip()
+    return sender.split("@")[0] if "@" in sender else sender
+
+
+# ── Australian tax rules ──────────────────────────────────────────────────────
+
+_ALWAYS_DEDUCTIBLE = {"donations", "investment fees"}
+_EMPLOYEE_DEDUCTIBLE = {
+    "work equipment", "self-education", "internet & phone",
+    "work-related car expenses", "work-related travel expenses",
+    "work-related clothing expenses", "work-related self-education",
+    "other work-related deductions",
+}
+_SOLE_TRADER_DEDUCTIBLE = {
+    "sole trader expenses", "work equipment", "self-education",
+    "internet & phone", "utilities", "subscriptions",
+    "advertising", "accounting", "insurance",
+}
+_INVESTOR_DEDUCTIBLE = {"investment fees", "subscriptions"}
+_REVIEW_CATEGORIES = {
+    "internet & phone", "subscriptions", "transport",
+    "home & garden", "utilities",
+}
+
+
+def _build_tax_rules(occupation: str, income_types: str) -> dict:
+    types_set = {t.strip().lower() for t in income_types.split(",")} if income_types else set()
+    deductible = set(_ALWAYS_DEDUCTIBLE)
+    if "employee" in types_set or not types_set:
+        deductible |= _EMPLOYEE_DEDUCTIBLE
+    if "sole_trader" in types_set:
+        deductible |= _SOLE_TRADER_DEDUCTIBLE
+    if "investor" in types_set:
+        deductible |= _INVESTOR_DEDUCTIBLE
+    return {"deductible_categories": deductible, "income_types": types_set, "occupation": occupation}
+
+
+def _apply_tax_rules(category: str, description: str, ai_deductible: bool, ai_tax_cat: Optional[str], rules: dict) -> dict:
+    cat_lower = category.lower()
+    deductible_cats = rules["deductible_categories"]
+    rule_deductible = cat_lower in deductible_cats
+    deductible = ai_deductible or rule_deductible
+    tax_category = ai_tax_cat
+    if deductible and not tax_category:
+        if cat_lower in ("work equipment",): tax_category = "Other work-related deductions"
+        elif cat_lower in ("self-education",): tax_category = "Work-related self-education"
+        elif cat_lower in ("internet & phone",): tax_category = "Other work-related deductions"
+        elif cat_lower in ("donations",): tax_category = "Donations"
+        elif cat_lower in ("investment fees",): tax_category = "Investment income deductions"
+        elif cat_lower in ("sole trader expenses",): tax_category = "Sole trader business expenses"
+    needs_review = (cat_lower in _REVIEW_CATEGORIES and not ai_deductible) or (
+        cat_lower == "subscriptions" and not deductible
+    )
+    return {"deductible": deductible, "tax_category": tax_category, "needs_review": needs_review}
 
 
 # ── AI extraction ─────────────────────────────────────────────────────────────
@@ -311,7 +517,6 @@ def _extract_transactions_from_emails(emails: list[dict], provider: str, api_key
     prompts = [(_build_batch_prompt(b), b) for b in batches]
 
     extracted = []
-    # Run all batches concurrently (3 threads max to avoid rate limits)
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
         futures = {ex.submit(_call_ai_batch, p, provider, api_key): b for p, b in prompts}
         for future, batch in futures.items():
@@ -334,6 +539,170 @@ def _extract_transactions_from_emails(emails: list[dict], provider: str, api_key
     return extracted
 
 
+# ── Core scan logic ───────────────────────────────────────────────────────────
+
+async def _run_gmail_scan(session: Session, user_id: int) -> dict:
+    """
+    Core scan logic: process payslip label and expense label.
+    Returns a summary dict. Called by both the HTTP endpoint and the background scheduler.
+    """
+    email_addr = get_setting(session, "gmail_address") or ""
+    app_password = get_setting(session, "gmail_app_password") or ""
+
+    if not email_addr or not app_password:
+        return {"ok": False, "reason": "Gmail credentials not configured"}
+
+    payslip_label = get_setting(session, "gmail_payslip_label") or ""
+    expense_label = get_setting(session, "gmail_expense_label") or ""
+
+    if not payslip_label and not expense_label:
+        return {"ok": False, "reason": "No Gmail labels configured. Set gmail_payslip_label and/or gmail_expense_label in Settings."}
+
+    # Scan since last run minus 1 day buffer, or 30 days if never run
+    last_scan = get_setting(session, "gmail_last_scan") or ""
+    if last_scan:
+        try:
+            since_dt = datetime.fromisoformat(last_scan) - timedelta(days=1)
+            since_date = since_dt.strftime("%d-%b-%Y")
+        except Exception:
+            since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
+    else:
+        since_date = (datetime.now() - timedelta(days=30)).strftime("%d-%b-%Y")
+
+    results: dict = {
+        "payslips": {"processed": 0, "skipped": 0, "errors": []},
+        "expenses": {"processed": 0, "skipped": 0, "errors": []},
+        "since_date": since_date,
+    }
+
+    # ── 1. Payslip label ──────────────────────────────────────────────────────
+    if payslip_label:
+        try:
+            emails = _fetch_emails_from_label(email_addr, app_password, payslip_label, since_date)
+            for em in emails:
+                for att in em["attachments"]:
+                    if att["ext"] == "pdf":
+                        result = await _import_payslip_from_bytes(
+                            att["data"], att["filename"], em["sender"], session, user_id
+                        )
+                        if result.get("ok"):
+                            results["payslips"]["processed"] += 1
+                        elif result.get("skipped"):
+                            results["payslips"]["skipped"] += 1
+                        else:
+                            results["payslips"]["errors"].append(
+                                f"{em['subject'][:60]}: {result.get('error', 'unknown')}"
+                            )
+        except Exception as e:
+            results["payslips"]["errors"].append(str(e))
+
+    # ── 2. Expense/receipt label ──────────────────────────────────────────────
+    if expense_label:
+        try:
+            emails = _fetch_emails_from_label(email_addr, app_password, expense_label, since_date)
+
+            provider = get_setting(session, "ai_provider") or "gemini"
+            if provider == "gemini":
+                api_key = get_setting(session, "gemini_api_key") or os.environ.get("GEMINI_API_KEY", "")
+            else:
+                api_key = get_setting(session, "anthropic_api_key") or os.environ.get("ANTHROPIC_API_KEY", "")
+
+            categories = session.exec(select(Category)).all()
+            cat_map = {c.name.lower(): c for c in categories}
+            uncat = next((c for c in categories if c.name == "Uncategorised"), None)
+
+            first_account = session.exec(
+                select(Account).where(Account.user_id == user_id)
+            ).first()
+            account_id = first_account.id if first_account else None
+
+            occupation = get_setting(session, "occupation") or ""
+            income_types = get_setting(session, "income_types") or ""
+            tax_rules = _build_tax_rules(occupation, income_types)
+
+            # Save binary attachments first, keyed by message_id
+            receipt_files: dict[str, list[str]] = {}
+            for em in emails:
+                saved = []
+                for att in em["attachments"]:
+                    if att["ext"] in ("pdf", "jpg", "jpeg", "png", "gif", "webp") or att["content_type"].startswith("image/"):
+                        try:
+                            path = _save_receipt_binary(
+                                att["data"], att["filename"], att["ext"],
+                                "expense", date.today().isoformat(), em["subject"][:40]
+                            )
+                            saved.append(path)
+                        except Exception as save_err:
+                            results["expenses"]["errors"].append(f"Save error: {save_err}")
+                if saved:
+                    receipt_files[em["message_id"]] = saved
+
+            # AI extraction for transaction amounts from email bodies
+            if api_key:
+                extracted = _extract_transactions_from_emails(emails, provider, api_key)
+
+                for item in extracted:
+                    raw_hash = "gmail:" + hashlib.sha256(
+                        (item.get("message_id", "") + str(item.get("amount", "")) + item.get("date", "")).encode()
+                    ).hexdigest()
+
+                    exists = session.exec(
+                        select(Transaction).where(
+                            Transaction.raw_hash == raw_hash,
+                            Transaction.user_id == user_id,
+                        )
+                    ).first()
+                    if exists:
+                        results["expenses"]["skipped"] += 1
+                        continue
+
+                    amount = float(item.get("amount", 0))
+                    if amount <= 0:
+                        results["expenses"]["skipped"] += 1
+                        continue
+
+                    try:
+                        txn_date = date.fromisoformat(item["date"])
+                    except Exception:
+                        txn_date = date.today()
+
+                    cat_name = item.get("suggested_category", "")
+                    cat = cat_map.get(cat_name.lower()) or uncat
+                    ai_deductible = bool(item.get("is_tax_deductible", False))
+                    ai_tax_cat = item.get("tax_category")
+                    tax_result = _apply_tax_rules(cat_name, item.get("description", ""), ai_deductible, ai_tax_cat, tax_rules)
+
+                    # Attach saved receipt file if any
+                    msg_receipts = receipt_files.get(item.get("message_id", ""), [])
+                    receipt_path = msg_receipts[0] if msg_receipts else None
+
+                    txn = Transaction(
+                        account_id=account_id,
+                        date=txn_date,
+                        description=item.get("description", item.get("subject", "Gmail import"))[:200],
+                        amount=amount,
+                        is_credit=bool(item.get("is_credit", False)),
+                        category_id=cat.id if cat else None,
+                        tax_deductible=tax_result["deductible"],
+                        tax_category=tax_result["tax_category"],
+                        is_flagged=tax_result["needs_review"],
+                        notes=item.get("notes"),
+                        receipt_path=receipt_path,
+                        raw_hash=raw_hash,
+                        user_id=user_id,
+                    )
+                    session.add(txn)
+                    results["expenses"]["processed"] += 1
+
+                session.commit()
+
+        except Exception as e:
+            results["expenses"]["errors"].append(str(e))
+
+    set_setting(session, "gmail_last_scan", datetime.now().isoformat())
+    return {"ok": True, "results": results}
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 import os as _os_gmail
@@ -349,28 +718,17 @@ _STOP_WORDS = {
 
 
 def _merchant_words(text: str) -> set[str]:
-    """Extract meaningful words from a merchant/description string."""
     words = re.findall(r"[a-zA-Z]{4,}", text.lower())
     return {w for w in words if w not in _STOP_WORDS}
 
 
 def _fuzzy_merchant_match(desc_a: str, desc_b: str) -> bool:
-    """True if the two strings share at least one significant word."""
     return bool(_merchant_words(desc_a) & _merchant_words(desc_b))
 
 
 def _find_matching_txn(
-    session: Session,
-    amount: float,
-    txn_date: date,
-    description: str,
-    user_id: int,
+    session: Session, amount: float, txn_date: date, description: str, user_id: int
 ) -> Optional[Transaction]:
-    """
-    Find an existing transaction matching amount (±2%), date (±3 days),
-    and merchant (fuzzy word overlap). Returns the best match or None.
-    """
-    from datetime import timedelta
     lo = txn_date - timedelta(days=3)
     hi = txn_date + timedelta(days=3)
     amt_lo = amount * 0.98
@@ -389,24 +747,18 @@ def _find_matching_txn(
 
     if not candidates:
         return None
-
-    # Prefer fuzzy merchant match; fall back to first candidate by date proximity
     for txn in candidates:
         if _fuzzy_merchant_match(description, txn.description):
             return txn
-
-    # No merchant overlap — still return closest by date if amount is exact-ish
     if len(candidates) == 1:
         return candidates[0]
-
-    # Multiple candidates, no merchant match — skip to avoid false positives
     return None
 
 
 class ScanRequest(BaseModel):
     days: int = 90
     account_id: Optional[int] = None
-    commit: bool = False  # if True, save directly; if False, return preview
+    commit: bool = False
 
 
 class CorrelateRequest(BaseModel):
@@ -434,13 +786,44 @@ def test_gmail_connection(
         raise HTTPException(500, f"Connection error: {e}")
 
 
+@router.get("/status")
+def gmail_scan_status(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Return last scan time and configured labels."""
+    last_scan = get_setting(session, "gmail_last_scan") or None
+    payslip_label = get_setting(session, "gmail_payslip_label") or ""
+    expense_label = get_setting(session, "gmail_expense_label") or ""
+    return {
+        "last_scan": last_scan,
+        "payslip_label": payslip_label,
+        "expense_label": expense_label,
+        "configured": bool(payslip_label or expense_label),
+    }
+
+
+@router.post("/auto-scan")
+async def auto_scan_gmail(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Scan configured Gmail labels and import payslips + expense transactions.
+    Payslip PDFs are saved as original files and parsed via AI.
+    Receipt attachments are saved as original files and linked to transactions.
+    """
+    result = await _run_gmail_scan(session, current_user.id)
+    return result
+
+
 @router.post("/scan")
 def scan_gmail(
     body: ScanRequest,
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """Scan Gmail for receipt emails and extract transactions."""
+    """Legacy: scan Gmail inbox for receipt emails and extract transactions."""
     email_addr = get_setting(session, "gmail_address") or ""
     app_password = get_setting(session, "gmail_app_password") or ""
     provider = get_setting(session, "ai_provider") or "gemini"
@@ -457,7 +840,6 @@ def scan_gmail(
     if not api_key:
         raise HTTPException(400, f"{key_name} API key not configured. Add it in Settings.")
 
-    # Determine account to import to (only consider accounts owned by this user)
     account_id = body.account_id
     if not account_id:
         first_account = session.exec(
@@ -466,15 +848,13 @@ def scan_gmail(
         if first_account:
             account_id = first_account.id
 
-    # Fetch emails in a thread so we can enforce a hard timeout.
-    # IMPORTANT: do NOT use `with executor` — its __exit__ waits for threads to finish.
     ex = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = ex.submit(_fetch_receipt_emails, email_addr, app_password, body.days)
     try:
         emails = future.result(timeout=40)
     except concurrent.futures.TimeoutError:
         ex.shutdown(wait=False)
-        raise HTTPException(504, "Gmail scan timed out. Try a shorter date range (7 or 14 days).")
+        raise HTTPException(504, "Gmail scan timed out. Try a shorter date range.")
     except imaplib.IMAP4.error as e:
         ex.shutdown(wait=False)
         raise HTTPException(400, f"IMAP error: {e}")
@@ -487,11 +867,9 @@ def scan_gmail(
     if not emails:
         return {"scanned": 0, "found": 0, "transactions": [], "imported": 0, "skipped": 0}
 
-    # Extract via AI
     extracted = _extract_transactions_from_emails(emails, provider, api_key)
 
     if not body.commit:
-        # Preview mode — return extracted without saving
         return {
             "scanned": len(emails),
             "found": len(extracted),
@@ -500,21 +878,16 @@ def scan_gmail(
             "skipped": 0,
         }
 
-    # Load income profile for tax auto-flagging
     occupation = get_setting(session, "occupation") or ""
-    income_types = get_setting(session, "income_types") or ""  # comma-separated: employee,investor,sole_trader,rental
+    income_types = get_setting(session, "income_types") or ""
     tax_rules = _build_tax_rules(occupation, income_types)
 
-    # Commit mode — save to DB
     categories = session.exec(select(Category)).all()
     cat_map = {c.name.lower(): c for c in categories}
     uncat = next((c for c in categories if c.name == "Uncategorised"), None)
 
-    # Ensure receipt directory exists
     receipt_dir = _os_gmail.path.join(_DATA_DIR_GMAIL, "receipts", "gmail")
     os.makedirs(receipt_dir, exist_ok=True)
-
-    # Build email body lookup by message_id
     email_body_map = {e["message_id"]: e for e in emails}
 
     imported, skipped = 0, 0
@@ -524,7 +897,6 @@ def scan_gmail(
             (item.get("message_id", "") + str(item.get("amount", "")) + item.get("date", "")).encode()
         ).hexdigest()
 
-        # Dedup (scoped to this user)
         exists = session.exec(
             select(Transaction).where(
                 Transaction.raw_hash == raw_hash,
@@ -542,13 +914,10 @@ def scan_gmail(
 
         cat_name = item.get("suggested_category", "")
         cat = cat_map.get(cat_name.lower()) or uncat
-
-        # Tax deductibility: start with AI suggestion, then apply income-profile rules
         ai_deductible = bool(item.get("is_tax_deductible", False))
         ai_tax_cat = item.get("tax_category")
         tax_result = _apply_tax_rules(cat_name, item.get("description", ""), ai_deductible, ai_tax_cat, tax_rules)
 
-        # Save receipt email as HTML file for audit trail
         receipt_path = None
         msg_id = item.get("message_id", "")
         src_email = email_body_map.get(msg_id)
@@ -567,7 +936,7 @@ def scan_gmail(
                     f.write(html_content)
                 receipt_path = receipt_file
             except Exception:
-                pass  # receipt save failure shouldn't block import
+                pass
 
         txn = Transaction(
             account_id=account_id,
@@ -612,11 +981,7 @@ def correlate_receipts(
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
-    """
-    Scan Gmail for receipt emails and match them to existing transactions.
-    For each match, saves the email as an HTML receipt file and attaches it.
-    Returns matched, unmatched, and already-receipted counts.
-    """
+    """Scan Gmail for receipt emails and match them to existing transactions."""
     email_addr = get_setting(session, "gmail_address") or ""
     app_password = get_setting(session, "gmail_app_password") or ""
     provider = get_setting(session, "ai_provider") or "gemini"
@@ -682,7 +1047,6 @@ def correlate_receipts(
             already_receipted += 1
             continue
 
-        # Save email as HTML receipt
         msg_id = item.get("message_id", "")
         src = email_body_map.get(msg_id)
         receipt_filename = None

@@ -1,5 +1,5 @@
 /* Finance Tracker Service Worker — cache-first for app shell, bypass for API */
-const CACHE_NAME = 'ft-v35';
+const CACHE_NAME = 'ft-v36';
 const APP_SHELL = ['./', './manifest.json', './icon.svg'];
 
 self.addEventListener('install', event => {

@@ -4666,9 +4666,41 @@
                   :placeholder="settings.gmail_app_password === '***' ? '(saved — enter new password to change)' : 'Paste 16-character app password'"
                   autocomplete="new-password" />
                 <p style="font-size:12px;color:var(--muted);margin-top:4px;">
-                  Stored locally on this server only. Used to read receipt emails via IMAP.
+                  Stored locally on this server only. Used to read emails via IMAP.
                   <span x-show="settings.gmail_app_password === '***'" style="color:var(--green);">✓ Password saved</span>
                 </p>
+              </div>
+              <div>
+                <label class="form-label">Payslip Label</label>
+                <input type="text" x-model="settings.gmail_payslip_label" placeholder="e.g. payslips/payslip 25/26" autocomplete="off" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Gmail label containing payslip emails. PDF attachments are saved as original files and parsed automatically.</p>
+              </div>
+              <div>
+                <label class="form-label">Expense / Receipt Label</label>
+                <input type="text" x-model="settings.gmail_expense_label" placeholder="e.g. receipts/Expenses 25/26" autocomplete="off" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Gmail label containing expense and receipt emails. PDF/image attachments saved as originals; email body parsed for transaction amount.</p>
+              </div>
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border-radius:10px;">
+                <div>
+                  <div style="font-size:13px;font-weight:600;">Daily auto-scan</div>
+                  <div style="font-size:12px;color:var(--muted);">Scans both labels once per day automatically</div>
+                  <div x-show="gmailScanStatus?.last_scan" style="font-size:11px;color:var(--muted);margin-top:3px;">
+                    Last scan: <span x-text="gmailScanStatus?.last_scan ? new Date(gmailScanStatus.last_scan).toLocaleString() : 'never'"></span>
+                  </div>
+                </div>
+                <label style="display:flex;align-items:center;gap:6px;cursor:pointer;">
+                  <input type="checkbox" :checked="settings.gmail_auto_scan_enabled !== '0'" @change="settings.gmail_auto_scan_enabled = $event.target.checked ? '1' : '0'" style="width:16px;height:16px;accent-color:var(--accent);" />
+                  Enabled
+                </label>
+              </div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                <button @click="testGmailConnection()" class="btn btn-ghost btn-sm">Test Connection</button>
+                <button @click="gmailAutoScan()" class="btn btn-ghost btn-sm" :disabled="gmailScanning">
+                  <span x-show="!gmailScanning">Scan Now</span>
+                  <span x-show="gmailScanning">Scanning...</span>
+                </button>
+                <span x-show="gmailScanResult" style="font-size:12px;color:var(--green);align-self:center;" x-text="gmailScanResult"></span>
+                <span x-show="gmailScanError" style="font-size:12px;color:var(--red);align-self:center;" x-text="gmailScanError"></span>
               </div>
             </div>
           </div>
@@ -6608,8 +6640,38 @@
         </div>
       </div></template>
 
-      <!-- ── Step 9: Done ── -->
-      <template x-if="wizardStep === 9"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
+      <!-- ── Step 9: Gmail ── -->
+      <template x-if="wizardStep === 9"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+        <div style="font-size:48px;text-align:center;margin-bottom:16px;">📧</div>
+        <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Auto-import from Gmail</h2>
+        <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 20px;line-height:1.6;">Finance Tracker can scan Gmail labels daily and automatically import payslips and receipts — including the original PDF files.</p>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div class="card" style="background:var(--surf2);padding:14px;margin-bottom:4px;">
+            <div style="font-size:12px;font-weight:600;margin-bottom:8px;">How it works</div>
+            <div style="font-size:12px;color:var(--muted);display:flex;flex-direction:column;gap:6px;">
+              <div>1. Create Gmail filter rules to apply labels to payslip/receipt emails</div>
+              <div>2. Enter those label names below (e.g. <code style="background:var(--bg);padding:1px 5px;border-radius:4px;">payslips/payslip 25/26</code>)</div>
+              <div>3. Finance Tracker scans once per day — original PDFs saved, AI extracts the data</div>
+            </div>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Payslip label</label>
+            <input type="text" x-model="wizardData.gmailPayslipLabel" placeholder="e.g. payslips/payslip 25/26" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">PDF attachments are saved as originals and parsed via AI</div>
+          </div>
+          <div>
+            <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Expense / receipt label</label>
+            <input type="text" x-model="wizardData.gmailExpenseLabel" placeholder="e.g. receipts/Expenses 25/26" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:13px;font-family:monospace;outline:none;">
+            <div style="font-size:11px;color:var(--muted);margin-top:4px;">PDF/image attachments saved; email body parsed for transaction amount</div>
+          </div>
+          <div x-show="wizardData.gmailPayslipLabel || wizardData.gmailExpenseLabel" style="font-size:12px;color:var(--amber);padding:10px 12px;background:rgba(245,158,11,.08);border-radius:8px;">
+            Make sure your Gmail address and App Password are already saved in Settings → Gmail Integration.
+          </div>
+        </div>
+      </div></template>
+
+      <!-- ── Step 10: Done ── -->
+      <template x-if="wizardStep === 10"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
         <div style="font-size:64px;text-align:center;margin-bottom:20px;">🎉</div>
         <h2 style="font-size:28px;font-weight:700;text-align:center;margin:0 0 8px;">You're all set!</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Here's a summary of what you've configured. You can change anything in Settings at any time.</p>
@@ -6638,9 +6700,9 @@
 
   <!-- Navigation buttons (inline, bottom of content) -->
   <div style="display:flex;align-items:center;gap:10px;margin-top:36px;padding-bottom:24px;border-top:1px solid var(--border);padding-top:20px;">
-    <button x-show="wizardStep > 0 && wizardStep < 9" @click="wizardBack()" class="btn btn-ghost">← Back</button>
+    <button x-show="wizardStep > 0 && wizardStep < 10" @click="wizardBack()" class="btn btn-ghost">← Back</button>
     <div style="flex:1;"></div>
-    <button x-show="wizardIsOptional && wizardStep < 9" @click="wizardSkip()" class="btn btn-ghost" style="color:var(--muted);">Skip</button>
+    <button x-show="wizardIsOptional && wizardStep < 10" @click="wizardSkip()" class="btn btn-ghost" style="color:var(--muted);">Skip</button>
     <button @click="wizardNext()" :disabled="wizardBusy" class="btn btn-primary" style="padding:10px 28px;min-width:160px;">
       <span x-show="!wizardBusy" x-text="wizardContinueLabel"></span>
       <span x-show="wizardBusy">Saving…</span>
@@ -7006,6 +7068,7 @@ function app() {
       billName: '', billAmount: '', billFreq: 'monthly',
       goalName: '', goalTarget: '',
       apiKey: '', notifyTarget: '',
+      gmailPayslipLabel: '', gmailExpenseLabel: '',
     },
     wizardSteps: [
       { id: 'welcome', label: 'Welcome', optional: false },
@@ -7017,6 +7080,7 @@ function app() {
       { id: 'goals', label: 'Goals', optional: true },
       { id: 'ai', label: 'AI', optional: true },
       { id: 'notify', label: 'Alerts', optional: true },
+      { id: 'gmail', label: 'Gmail', optional: true },
       { id: 'done', label: 'Done', optional: false },
     ],
     get wizardProgress() {
@@ -7059,6 +7123,9 @@ function app() {
     gmailCorrelateDays: 30,
     gmailCorrelating: false,
     gmailCorrelateResult: null,
+    gmailScanStatus: null,
+    gmailScanResult: '',
+    gmailScanError: '',
     enriching: false,
     enrichResult: null,
     zbbSummary: null,
@@ -8231,6 +8298,13 @@ function app() {
             await this.api('/api/settings', { method: 'POST', body: JSON.stringify(this.settings) });
             await this.loadSettings();
           }
+        } else if (step.id === 'gmail') {
+          if (this.wizardData.gmailPayslipLabel?.trim() || this.wizardData.gmailExpenseLabel?.trim()) {
+            this.settings.gmail_payslip_label = this.wizardData.gmailPayslipLabel?.trim() || this.settings.gmail_payslip_label;
+            this.settings.gmail_expense_label = this.wizardData.gmailExpenseLabel?.trim() || this.settings.gmail_expense_label;
+            await this.api('/api/settings', { method: 'POST', body: JSON.stringify(this.settings) });
+            await this.loadSettings();
+          }
         } else if (step.id === 'done') {
           localStorage.setItem('ft_setup_done', '1');
           this.page = 'dashboard';
@@ -8321,6 +8395,7 @@ function app() {
       this.loadFlaggedTxns();
       this.loadTaxSummary();
       this.loadBasiqStatus();
+      this.loadGmailStatus();
 
       // Auto-open setup wizard for new users with no accounts
       if (!this.accounts.length && !localStorage.getItem('ft_setup_done')) {
@@ -9652,6 +9727,35 @@ function app() {
         const data = await this.api('/api/gmail/test');
         this.gmailResult = `Connected! Inbox has ${data.inbox_messages} messages.`;
       } catch (e) { /* toast shown by api() */ }
+    },
+
+    async loadGmailStatus() {
+      try {
+        this.gmailScanStatus = await this.api('/api/gmail/status');
+      } catch { this.gmailScanStatus = null; }
+    },
+
+    async gmailAutoScan() {
+      this.gmailScanResult = ''; this.gmailScanError = ''; this.gmailScanning = true;
+      try {
+        const data = await this.api('/api/gmail/auto-scan', { method: 'POST' });
+        if (!data.ok) {
+          this.gmailScanError = data.reason || 'Scan failed';
+        } else {
+          const r = data.results;
+          const parts = [];
+          if ((r.payslips?.processed || 0) > 0) parts.push(`${r.payslips.processed} payslip${r.payslips.processed > 1 ? 's' : ''} imported`);
+          if ((r.expenses?.processed || 0) > 0) parts.push(`${r.expenses.processed} expense${r.expenses.processed > 1 ? 's' : ''} imported`);
+          const skipped = (r.payslips?.skipped || 0) + (r.expenses?.skipped || 0);
+          if (skipped > 0) parts.push(`${skipped} skipped`);
+          this.gmailScanResult = parts.length ? parts.join(', ') : 'Scan complete — nothing new found';
+          const allErrors = [...(r.payslips?.errors || []), ...(r.expenses?.errors || [])];
+          if (allErrors.length) this.gmailScanError = allErrors.slice(0, 2).join('; ');
+          await this.loadGmailStatus();
+          await this.loadDashboard();
+        }
+      } catch (e) { this.gmailScanError = e.message || 'Scan error'; }
+      finally { this.gmailScanning = false; }
     },
 
     async scanGmailPreview() {

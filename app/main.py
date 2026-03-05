@@ -611,6 +611,36 @@ async def _newsletter_loop():
             pass
 
 
+async def _gmail_scan_loop():
+    """Background task: daily Gmail scan for payslips and expense receipts."""
+    await asyncio.sleep(120)  # wait 2 min after startup before first check
+    while True:
+        try:
+            with Session(engine) as session:
+                from deps import get_setting
+                enabled = get_setting(session, "gmail_auto_scan_enabled", "1")
+                if enabled != "0":
+                    last_scan = get_setting(session, "gmail_last_scan", "")
+                    run_now = True
+                    if last_scan:
+                        try:
+                            from datetime import datetime as _dt
+                            last_dt = _dt.fromisoformat(last_scan)
+                            if (_dt.now() - last_dt).total_seconds() < 23 * 3600:
+                                run_now = False
+                        except ValueError:
+                            pass
+                    if run_now:
+                        payslip_label = get_setting(session, "gmail_payslip_label", "")
+                        expense_label = get_setting(session, "gmail_expense_label", "")
+                        if payslip_label or expense_label:
+                            from routers.gmail import _run_gmail_scan
+                            await _run_gmail_scan(session, 1)
+        except Exception:
+            pass
+        await asyncio.sleep(3600)  # check every hour
+
+
 async def _price_refresh_loop():
     """Background task: auto-refresh investment and crypto prices."""
     await asyncio.sleep(300)  # wait 5 min after startup
@@ -667,11 +697,13 @@ async def lifespan(app: FastAPI):
     task2 = asyncio.create_task(_newsletter_loop())
     task3 = asyncio.create_task(_price_refresh_loop())
     task4 = asyncio.create_task(_payslip_watch_loop())
+    task5 = asyncio.create_task(_gmail_scan_loop())
     yield
     task1.cancel()
     task2.cancel()
     task3.cancel()
     task4.cancel()
+    task5.cancel()
 
 
 app = FastAPI(title="Finance Tracker", lifespan=lifespan)
