@@ -1,6 +1,17 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v37",
+    "title": "Gmail Label Discovery + Import Page Overhaul",
+    "items": [
+      "Settings → Gmail: new 'List Labels' button shows all IMAP folder names from your Gmail account — click any label to copy it",
+      "Import page: Gmail section updated to use label-based date scanning (replaces old days dropdown)",
+      "Import page: date picker defaults to 2024-07-01 for FY24/25 backfill; 'Scan recent' uses last-scan logic",
+      "GET /api/gmail/labels endpoint lists all IMAP folder names to resolve label path ambiguity"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v36",
     "title": "Gmail Smart Import — Payslips + Receipts",
     "items": [

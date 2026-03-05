@@ -1435,83 +1435,29 @@
         <div class="card" style="margin-top:16px;">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
             <div>
-              <div class="section-title" style="margin-bottom:2px;">Scan Gmail for Receipts</div>
-              <div style="font-size:12px;color:var(--muted);">Uses IMAP + AI to extract expenses from receipt emails</div>
+              <div class="section-title" style="margin-bottom:2px;">Gmail Smart Import</div>
+              <div style="font-size:12px;color:var(--muted);">Scans your configured Gmail labels — imports payslips and expense receipts automatically</div>
             </div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap;">
-              <button @click="testGmailConnection()" class="btn btn-ghost btn-sm">Test Connection</button>
-              <select x-model="gmailScanDays" style="width:120px;padding:6px 10px;font-size:13px;">
-                <option value="7">Last 7 days</option>
-                <option value="14">Last 14 days</option>
-                <option value="30" selected>Last 30 days</option>
-                <option value="60">Last 60 days</option>
-              </select>
-              <button @click="scanGmailPreview()" class="btn btn-ghost btn-sm"
-                :disabled="gmailScanning">🔍 Preview</button>
-              <button @click="scanGmailImport()" class="btn btn-primary btn-sm"
-                :disabled="gmailScanning || gmailPreview.length === 0">📥 Import All</button>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+              <input type="date" x-model="gmailHistoricalDate" style="padding:6px 10px;background:var(--bg);border:1px solid var(--border);border-radius:8px;color:var(--text);font-size:13px;" />
+              <button @click="gmailAutoScan(gmailHistoricalDate)" class="btn btn-primary btn-sm" :disabled="gmailScanning || !gmailHistoricalDate">
+                <span x-show="!gmailScanning">Scan from date</span>
+                <span x-show="gmailScanning">Scanning...</span>
+              </button>
+              <button @click="gmailAutoScan(null)" class="btn btn-ghost btn-sm" :disabled="gmailScanning">Scan recent</button>
             </div>
           </div>
-
-          <div x-show="gmailScanning" style="text-align:center;padding:20px;color:var(--muted);font-size:13px;">
-            Scanning Gmail… this may take 30–60 seconds ⏳
+          <div x-show="gmailScanResult" class="alert alert-success" style="margin-bottom:8px;" x-text="gmailScanResult"></div>
+          <div x-show="gmailScanError" class="alert alert-error" style="margin-bottom:8px;" x-text="gmailScanError"></div>
+          <div x-show="gmailScanStatus?.last_scan" style="font-size:12px;color:var(--muted);">
+            Last scan: <span x-text="gmailScanStatus?.last_scan ? new Date(gmailScanStatus.last_scan).toLocaleString() : ''"></span>
           </div>
-          <div x-show="gmailError" class="alert alert-error" style="margin-bottom:12px;" x-text="gmailError"></div>
-          <div x-show="gmailResult" class="alert alert-success" style="margin-bottom:12px;" x-text="gmailResult"></div>
-
-          <!-- Preview table (desktop) -->
-          <div x-show="gmailPreview.length > 0 && !gmailScanning" class="hide-mobile">
-            <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--text);"
-              x-text="`Found ${gmailPreview.length} potential transactions — review before importing:`"></div>
-            <div class="tbl-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Date</th><th>Description</th><th>Category</th>
-                    <th style="text-align:right;">Amount</th><th>Tax</th><th>Source</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <template x-for="t in gmailPreview" :key="t.message_id">
-                    <tr>
-                      <td style="white-space:nowrap;color:var(--muted);" x-text="t.date"></td>
-                      <td x-text="t.description"></td>
-                      <td style="color:var(--muted);font-size:12px;" x-text="t.suggested_category"></td>
-                      <td style="text-align:right;" class="amt" x-text="'$' + fmt(t.amount)"></td>
-                      <td style="text-align:center;">
-                        <span x-show="t.is_tax_deductible" class="badge badge-accent">tax</span>
-                      </td>
-                      <td style="font-size:11px;color:var(--muted);max-width:160px;overflow:hidden;
-                        text-overflow:ellipsis;white-space:nowrap;" x-text="t.sender"></td>
-                    </tr>
-                  </template>
-                </tbody>
-              </table>
-            </div>
+          <div x-show="!gmailScanStatus?.configured" style="font-size:13px;color:var(--muted);margin-top:8px;">
+            Configure Gmail credentials and labels in <button @click="page='settings'" class="btn btn-ghost btn-sm" style="padding:2px 8px;margin-left:2px;">Settings → Gmail</button> first.
           </div>
-
-          <!-- Preview cards (mobile) -->
-          <div x-show="gmailPreview.length > 0 && !gmailScanning" class="hide-desktop" style="display:flex;flex-direction:column;gap:8px;">
-            <div style="font-size:13px;font-weight:600;color:var(--text);"
-              x-text="`Found ${gmailPreview.length} transactions:`"></div>
-            <template x-for="t in gmailPreview" :key="t.message_id">
-              <div class="card-sm" style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;">
-                <div style="flex:1;min-width:0;">
-                  <div style="font-size:14px;font-weight:500;" x-text="t.description"></div>
-                  <div style="font-size:11px;color:var(--muted);" x-text="`${t.date} · ${t.suggested_category}`"></div>
-                </div>
-                <div>
-                  <div class="amt" x-text="'$' + fmt(t.amount)"></div>
-                  <span x-show="t.is_tax_deductible" class="badge badge-accent" style="margin-top:2px;">tax</span>
-                </div>
-              </div>
-            </template>
-            <button x-show="gmailPreview.length > 0" @click="scanGmailImport()" class="btn btn-primary">Import All</button>
-          </div>
-
-          <div x-show="gmailPreview.length === 0 && !gmailScanning && !gmailError && !gmailResult"
-            style="font-size:13px;color:var(--muted);text-align:center;padding:16px;">
-            Configure Gmail credentials in Settings, then click Preview to scan your inbox.
+          <div style="font-size:12px;color:var(--muted);margin-top:8px;">
+            Set scan date to <strong>01/07/2024</strong> for FY24/25 backfill, or <strong>01/07/2025</strong> for FY25/26.
+            Labels are configured in Settings → Gmail.
           </div>
         </div>
 
@@ -4672,12 +4618,12 @@
               </div>
               <div>
                 <label class="form-label">Payslip Label</label>
-                <input type="text" x-model="settings.gmail_payslip_label" placeholder="e.g. payslips/payslip 25/26, payslips/payslip 24/25" autocomplete="off" />
-                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Comma-separated Gmail labels. PDF attachments saved as originals and parsed via AI. Use multiple labels to scan across financial years.</p>
+                <input type="text" x-model="settings.gmail_payslip_label" placeholder="e.g. A) Personal/payslips/payslip 25/26, A) Personal/payslips/payslip 24/25" autocomplete="off" />
+                <p style="font-size:12px;color:var(--muted);margin-top:4px;">Comma-separated IMAP folder paths. Use 'List Labels' button below to find exact names. PDF attachments parsed via AI.</p>
               </div>
               <div>
                 <label class="form-label">Expense / Receipt Labels</label>
-                <input type="text" x-model="settings.gmail_expense_label" placeholder="e.g. receipts/Expenses 25/26, receipts/expenses 24/25" autocomplete="off" />
+                <input type="text" x-model="settings.gmail_expense_label" placeholder="e.g. A) Personal/receipts/Expenses 25/26, A) Personal/receipts/expenses 24/25" autocomplete="off" />
                 <p style="font-size:12px;color:var(--muted);margin-top:4px;">Comma-separated Gmail labels. PDF/image attachments saved as originals; email body parsed for transaction amount.</p>
               </div>
               <div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border-radius:10px;">
@@ -4695,12 +4641,24 @@
               </div>
               <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
                 <button @click="testGmailConnection()" class="btn btn-ghost btn-sm">Test Connection</button>
+                <button @click="listGmailLabels()" class="btn btn-ghost btn-sm" :disabled="gmailLabelsLoading">
+                  <span x-show="!gmailLabelsLoading">List Labels</span>
+                  <span x-show="gmailLabelsLoading">Loading...</span>
+                </button>
                 <button @click="gmailAutoScan(null)" class="btn btn-ghost btn-sm" :disabled="gmailScanning">
                   <span x-show="!gmailScanning">Scan Now</span>
                   <span x-show="gmailScanning">Scanning...</span>
                 </button>
                 <span x-show="gmailScanResult" style="font-size:12px;color:var(--green);align-self:center;" x-text="gmailScanResult"></span>
                 <span x-show="gmailScanError" style="font-size:12px;color:var(--red);align-self:center;" x-text="gmailScanError"></span>
+              </div>
+              <div x-show="gmailLabels.length > 0" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 14px;">
+                <div style="font-size:12px;font-weight:600;color:var(--muted);margin-bottom:6px;">IMAP folder names — copy these exactly into the label fields above:</div>
+                <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                  <template x-for="lbl in gmailLabels" :key="lbl">
+                    <code @click="navigator.clipboard?.writeText(lbl)" style="font-size:11px;padding:2px 7px;background:var(--surf2);border-radius:4px;cursor:pointer;user-select:all;" x-text="lbl" title="Click to copy"></code>
+                  </template>
+                </div>
               </div>
               <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px;background:var(--surf2);border-radius:10px;">
                 <div style="font-size:12px;color:var(--muted);flex-shrink:0;">Historical scan from:</div>
@@ -7133,6 +7091,8 @@ function app() {
     gmailScanResult: '',
     gmailScanError: '',
     gmailHistoricalDate: '2024-07-01',
+    gmailLabels: [],
+    gmailLabelsLoading: false,
     enriching: false,
     enrichResult: null,
     zbbSummary: null,
@@ -9729,17 +9689,31 @@ function app() {
       this.loadFlaggedTxns(); this.loadDashboard();
     },
     async testGmailConnection() {
-      this.gmailError = ''; this.gmailResult = '';
+      this.gmailError = ''; this.gmailResult = ''; this.gmailScanResult = ''; this.gmailScanError = '';
       try {
         const data = await this.api('/api/gmail/test');
-        this.gmailResult = `Connected! Inbox has ${data.inbox_messages} messages.`;
-      } catch (e) { /* toast shown by api() */ }
+        const msg = `Connected — inbox has ${data.inbox_messages} messages.`;
+        this.gmailResult = msg;
+        this.gmailScanResult = msg;
+      } catch (e) {
+        this.gmailScanError = e?.message || 'Connection failed — check address and App Password';
+      }
     },
 
     async loadGmailStatus() {
       try {
         this.gmailScanStatus = await this.api('/api/gmail/status');
       } catch { this.gmailScanStatus = null; }
+    },
+
+    async listGmailLabels() {
+      this.gmailLabelsLoading = true; this.gmailLabels = [];
+      try {
+        const data = await this.api('/api/gmail/labels');
+        this.gmailLabels = data.labels || [];
+      } catch (e) {
+        this.gmailScanError = e?.message || 'Failed to list labels';
+      } finally { this.gmailLabelsLoading = false; }
     },
 
     async gmailAutoScan(sinceDate = null) {

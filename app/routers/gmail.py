@@ -804,6 +804,37 @@ def test_gmail_connection(
         raise HTTPException(500, f"Connection error: {e}")
 
 
+@router.get("/labels")
+def list_gmail_labels(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """List all IMAP folder names from the connected Gmail account."""
+    email_addr = get_setting(session, "gmail_address") or ""
+    app_password = get_setting(session, "gmail_app_password") or ""
+    if not email_addr or not app_password:
+        raise HTTPException(400, "Gmail credentials not configured in Settings")
+    try:
+        m = _connect_gmail(email_addr, app_password)
+        _, folders = m.list()
+        m.logout()
+        labels = []
+        for f in (folders or []):
+            if isinstance(f, bytes):
+                f = f.decode("utf-8", errors="replace")
+            # IMAP list response: (\Flags) "/" "Folder Name"  or  (\Flags) "/" Folder
+            match = re.search(r'\(.*?\)\s+"[^"]+"\s+(.+)$', f)
+            if match:
+                name = match.group(1).strip().strip('"')
+                labels.append(name)
+        labels.sort()
+        return {"labels": labels}
+    except imaplib.IMAP4.error as e:
+        raise HTTPException(400, f"IMAP error: {e}")
+    except Exception as e:
+        raise HTTPException(500, f"Error listing labels: {e}")
+
+
 @router.get("/status")
 def gmail_scan_status(
     session: Session = Depends(get_session),
