@@ -1,6 +1,27 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v32",
+    "title": "Setup Wizard Fix + Service Worker Cache Bust",
+    "items": [
+      "Setup wizard: now renders as a full-screen fixed overlay (z-index 50) — no more blank space or bottom-of-page positioning",
+      "Service worker: cache bumped from ft-v1 to ft-v31 — forces all browsers to discard stale cached HTML and fetch fresh content"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v31",
+    "title": "Mobile Layout Fix — No More Horizontal Scroll",
+    "items": [
+      "All pages: page-content now has overflow-x hidden — no horizontal scrolling anywhere on mobile",
+      "Tables: horizontal scroll disabled on mobile; non-essential columns hidden instead",
+      "Transactions table: Tax and Reimb columns hidden on mobile (still accessible via Edit modal)",
+      "Budget table: Last Month, Last 7d, and vs ABS/wk columns hidden on mobile (keeps Category, Budget, Spent, Left, Progress, Delete)",
+      "Filter selects and inputs: min-width constraints overridden on mobile so dropdowns fit within viewport"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v30",
     "title": "PDF Fix + Creative Notifications + Deep-Links",
     "items": [

@@ -196,7 +196,7 @@
     .sidebar { display: none !important; }
     .bottom-nav { display: flex; }
     .desktop-header { display: none; }
-    .page-content { padding: 14px 14px 100px; }
+    .page-content { padding: 14px 14px 100px; overflow-x: hidden; }
     .grid-2 { grid-template-columns: 1fr !important; }
     .grid-3 { grid-template-columns: 1fr !important; }
     .grid-4 { grid-template-columns: 1fr 1fr !important; }
@@ -204,8 +204,11 @@
     .toast { bottom: 80px; }
     .budget-layout { flex-direction: column; }
     .budget-right-col { width: 100%; }
-    .tbl-wrap td { padding: 8px 10px; }
+    .tbl-wrap { overflow-x: hidden; }
+    .tbl-wrap td { padding: 8px 10px; max-width: none !important; }
     .tbl-wrap thead th { padding: 8px 10px; }
+    select { min-width: 0 !important; }
+    input[type="text"], input[type="number"], input[type="date"] { min-width: 0 !important; }
   }
   @media (min-width: 768px) {
     .page-content { padding: 24px; }
@@ -1057,8 +1060,8 @@
                   <th>Description</th>
                   <th>Category</th>
                   <th style="text-align:right;">Amount</th>
-                  <th style="text-align:center;">Tax</th>
-                  <th style="text-align:center;">Reimb</th>
+                  <th style="text-align:center;" class="hide-mobile">Tax</th>
+                  <th style="text-align:center;" class="hide-mobile">Reimb</th>
                   <th style="text-align:center;">Edit</th>
                 </tr>
               </thead>
@@ -1091,11 +1094,11 @@
                     </td>
                     <td style="text-align:right;" class="amt" :class="t.is_credit ? 'credit' : ''"
                       x-text="(t.is_credit ? '+' : '-') + '$' + fmt(t.amount)"></td>
-                    <td style="text-align:center;">
+                    <td style="text-align:center;" class="hide-mobile">
                       <input type="checkbox" :checked="t.tax_deductible"
                         @change="toggleTax(t)" style="width:16px;height:16px;accent-color:var(--accent);cursor:pointer;" />
                     </td>
-                    <td style="text-align:center;">
+                    <td style="text-align:center;" class="hide-mobile">
                       <button @click="toggleReimbursable(t)" :title="t.is_reimbursable ? (t.reimbursement_received ? 'Received — click to unmark' : 'Pending — click to mark received') : 'Mark as reimbursable'"
                         :style="t.is_reimbursable ? (t.reimbursement_received ? 'font-size:14px;background:none;border:none;cursor:pointer;opacity:0.85;' : 'font-size:14px;background:none;border:none;cursor:pointer;opacity:0.85;') : 'font-size:14px;background:none;border:none;cursor:pointer;opacity:0.3;'"
                       >💼</button>
@@ -1708,9 +1711,9 @@
                     <th style="text-align:right;">Spent</th>
                     <th style="text-align:right;">Left</th>
                     <th>Progress</th>
-                    <th style="text-align:right;">Last Month</th>
-                    <th style="text-align:right;">Last 7d</th>
-                    <th>
+                    <th style="text-align:right;" class="hide-mobile">Last Month</th>
+                    <th style="text-align:right;" class="hide-mobile">Last 7d</th>
+                    <th class="hide-mobile">
                       <div>vs ABS/wk</div>
                       <div style="font-size:10px;font-weight:400;color:var(--muted);margin-top:1px;" x-text="'HES 2019-20 · ' + budgetAgeGroup"></div>
                     </th>
@@ -1742,17 +1745,17 @@
                             x-text="b.pct + '%'"></span>
                         </div>
                       </td>
-                      <td style="text-align:right;font-size:12px;">
+                      <td style="text-align:right;font-size:12px;" class="hide-mobile">
                         <div x-text="'$' + fmt(b.last_month_spend)"></div>
                         <div style="color:var(--muted);font-size:10px;">
                           <span :style="b.last_month_spend > b.budget ? 'color:var(--red)' : 'color:var(--green)'"
                             x-text="b.last_month_spend > b.budget ? '▲ over' : '✓ under'"></span>
                         </div>
                       </td>
-                      <td style="text-align:right;font-size:12px;">
+                      <td style="text-align:right;font-size:12px;" class="hide-mobile">
                         <span x-text="'$' + fmt(b.last_week_spend)"></span>
                       </td>
-                      <td>
+                      <td class="hide-mobile">
                         <template x-if="absByCategoryName(b.category_name)">
                           <div style="display:flex;flex-direction:column;gap:3px;">
                             <div style="display:flex;align-items:baseline;gap:4px;">
@@ -6297,7 +6300,9 @@
 </div>
 
 <!-- ═══════════ SETUP WIZARD ═══════════ -->
-<div x-show="page === 'setup'" x-cloak>
+<div x-show="page === 'setup'" x-cloak
+  style="position:fixed;inset:0;background:var(--bg);z-index:50;overflow-y:auto;
+         padding:24px 24px max(env(safe-area-inset-bottom,0px),24px);">
   <div style="max-width:540px;margin:0 auto;">
 
   <!-- Progress bar -->
