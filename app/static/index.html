@@ -204,7 +204,6 @@
     .toast { bottom: 80px; }
     .budget-layout { flex-direction: column; }
     .budget-right-col { width: 100%; }
-    .tbl-wrap { overflow-x: hidden; }
     .tbl-wrap td { padding: 8px 10px; max-width: none !important; }
     .tbl-wrap thead th { padding: 8px 10px; }
     select { min-width: 0 !important; }
@@ -1711,9 +1710,9 @@
                     <th style="text-align:right;">Spent</th>
                     <th style="text-align:right;">Left</th>
                     <th>Progress</th>
-                    <th style="text-align:right;" class="hide-mobile">Last Month</th>
-                    <th style="text-align:right;" class="hide-mobile">Last 7d</th>
-                    <th class="hide-mobile">
+                    <th style="text-align:right;">Last Month</th>
+                    <th style="text-align:right;">Last 7d</th>
+                    <th>
                       <div>vs ABS/wk</div>
                       <div style="font-size:10px;font-weight:400;color:var(--muted);margin-top:1px;" x-text="'HES 2019-20 · ' + budgetAgeGroup"></div>
                     </th>
@@ -1745,17 +1744,17 @@
                             x-text="b.pct + '%'"></span>
                         </div>
                       </td>
-                      <td style="text-align:right;font-size:12px;" class="hide-mobile">
+                      <td style="text-align:right;font-size:12px;">
                         <div x-text="'$' + fmt(b.last_month_spend)"></div>
                         <div style="color:var(--muted);font-size:10px;">
                           <span :style="b.last_month_spend > b.budget ? 'color:var(--red)' : 'color:var(--green)'"
                             x-text="b.last_month_spend > b.budget ? '▲ over' : '✓ under'"></span>
                         </div>
                       </td>
-                      <td style="text-align:right;font-size:12px;" class="hide-mobile">
+                      <td style="text-align:right;font-size:12px;">
                         <span x-text="'$' + fmt(b.last_week_spend)"></span>
                       </td>
-                      <td class="hide-mobile">
+                      <td>
                         <template x-if="absByCategoryName(b.category_name)">
                           <div style="display:flex;flex-direction:column;gap:3px;">
                             <div style="display:flex;align-items:baseline;gap:4px;">
@@ -3138,6 +3137,7 @@
                 </div>
                 <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
                   <button x-show="p.has_pdf" @click="viewPayslipPdf(p.id, p.employer + ' ' + p.pay_date)" class="btn btn-ghost btn-sm">📄 View PDF</button>
+                  <button x-show="p.has_pdf" @click="downloadPayslip(p.id, p.employer + ' ' + p.pay_date)" class="btn btn-ghost btn-sm">↓ Download</button>
                   <button x-show="p.flag_count > 0 && !p.is_reviewed" @click="markPayslipReviewed(p.id)" class="btn btn-ghost btn-sm">Mark reviewed</button>
                   <button @click="deletePayslip(p.id)" class="btn btn-danger btn-sm">Delete</button>
                 </div>
@@ -8120,6 +8120,23 @@ function app() {
     },
     closePdfModal() {
       this.pdfModal = { open: false, url: null, loading: false, name: '' };
+    },
+
+    async downloadPayslip(payslipId, name) {
+      // Get a short-lived token URL then trigger a browser download via <a download>
+      const BASE = window.FINANCE_BASE || '';
+      try {
+        const res = await this.api(`/api/payslips/${payslipId}/pdf-view`, { method: 'POST' });
+        if (!res?.view_path) { this.showToast('Could not generate download link', 4000); return; }
+        const a = document.createElement('a');
+        a.href = BASE + res.view_path;
+        a.download = (name || `payslip-${payslipId}`).replace(/[^a-z0-9 _-]/gi, '_') + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+      } catch(e) {
+        this.showToast('Download error: ' + e.message, 5000);
+      }
     },
 
     async wizardNext() {

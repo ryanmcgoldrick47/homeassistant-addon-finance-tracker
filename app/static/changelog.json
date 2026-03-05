@@ -1,6 +1,17 @@
 [
   {
     "date": "2026-03-05",
+    "version": "v34",
+    "title": "Budget Mobile Fix + PDF Download + Notify Dedup Fix",
+    "items": [
+      "Budget table: all columns restored on mobile (Last Month, Last 7d, vs ABS/wk) — table horizontally scrollable within the page",
+      "Mobile layout: removed overflow-x:hidden from .tbl-wrap — tables scroll within page-content instead of clipping",
+      "Payslips: new '↓ Download' button alongside 'View PDF' — directly downloads the PDF, bypasses all browser shields",
+      "Notifications: budget alert and pace alert dedup logs now persist correctly on first run (previously skipped if setting row didn't exist)"
+    ]
+  },
+  {
+    "date": "2026-03-05",
     "version": "v33",
     "title": "PDF New-Tab Fix + Setup Wizard Overlay",
     "items": [

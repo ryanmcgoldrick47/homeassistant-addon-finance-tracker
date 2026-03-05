@@ -11,7 +11,7 @@ from sqlmodel import Session, select, func
 
 import json as _json
 from database import Bill, Budget, Transaction, Category, Setting, get_session, User
-from deps import get_setting, get_current_user
+from deps import get_setting, set_setting, get_current_user
 
 router = APIRouter(prefix="/api/notify", tags=["notify"])
 
@@ -181,12 +181,8 @@ async def check_and_notify(
                 approaching.append(f"🟡 {cat.name}: {pct:.0f}% used (${spend:.0f} of ${budget_amt:.0f})")
                 alert_log[key] = str(today)
 
-    # Save updated dedup log
-    s_log = session.get(Setting, "budget_alert_log")
-    if s_log:
-        s_log.value = _json.dumps(alert_log)
-        session.add(s_log)
-        session.commit()
+    # Save updated dedup log (create row if it doesn't exist yet)
+    set_setting(session, "budget_alert_log", _json.dumps(alert_log))
 
     if over_budget:
         count = len(over_budget)
@@ -250,11 +246,7 @@ async def check_and_notify(
                 )
                 pace_log[pkey] = str(today)
 
-        p_log_s = session.get(Setting, "pace_alert_log")
-        if p_log_s:
-            p_log_s.value = _json.dumps(pace_log)
-            session.add(p_log_s)
-            session.commit()
+        set_setting(session, "pace_alert_log", _json.dumps(pace_log))
 
         if on_pace_to_overspend:
             count = len(on_pace_to_overspend)
