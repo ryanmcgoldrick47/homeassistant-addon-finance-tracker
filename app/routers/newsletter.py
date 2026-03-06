@@ -193,61 +193,155 @@ def _gather(session: Session, user_id: int) -> dict:
     from routers.score import _compute_score
     score_data = _compute_score(session, today.month, today.year, user_id)
 
-    # ── Roadmap — next priority items ──
-    ROADMAP_ITEMS = [
+    # ── Roadmap — rotating pool of genuine pending items (not yet built) ──
+    _ROADMAP_POOL = [
         {
             "title": "Basiq CDR Open Banking",
-            "desc": "Direct Macquarie bank feed via Consumer Data Right — would replace manual CSV import entirely.",
+            "desc": "Direct Macquarie bank feed via Consumer Data Right API — replaces manual CSV download entirely. Transactions sync automatically every morning.",
             "priority": "high",
-            "chat_prompt": "Let's integrate Basiq CDR open banking for automatic transaction import",
-        },
-        {
-            "title": "Multi-user Support (Karina)",
-            "desc": "Separate transaction views and dashboards for Ryan and Karina with shared bills/goals.",
-            "priority": "high",
-            "chat_prompt": "Let's add multi-user support for Ryan and Karina",
+            "chat_prompt": "Let's integrate Basiq CDR open banking for automatic daily transaction sync",
         },
         {
             "title": "Net Worth Forecast",
-            "desc": "Project net worth 1, 3, and 5 years out based on current savings rate and investment returns.",
+            "desc": "Project net worth 1, 3, and 5 years out based on current savings rate, investment return assumptions, and inflation. Chart shows confidence bands.",
+            "priority": "high",
+            "chat_prompt": "Let's build a net worth forecast with 1/3/5 year projections and a confidence band chart",
+        },
+        {
+            "title": "OCR Receipt Scanner",
+            "desc": "Upload a photo of a paper receipt → AI extracts merchant, date, and amount. Attaches to the matching transaction automatically.",
             "priority": "medium",
-            "chat_prompt": "Let's build a net worth forecast chart with 1/3/5 year projections",
+            "chat_prompt": "Let's add OCR receipt scanning — upload a photo and AI extracts the transaction details",
+        },
+        {
+            "title": "Subscription Manager",
+            "desc": "Auto-detect recurring charges from transaction history, group them as subscriptions, and alert when a price increases month-on-month.",
+            "priority": "medium",
+            "chat_prompt": "Let's build a subscription manager that detects recurring charges and flags price increases",
+        },
+        {
+            "title": "Mortgage & Loan Tracker",
+            "desc": "Track principal vs interest breakdown for any loan. Show payoff date, total interest saved by making extra repayments, and offset account impact.",
+            "priority": "medium",
+            "chat_prompt": "Let's add a mortgage/loan tracker with amortisation schedule and extra-repayment calculator",
+        },
+        {
+            "title": "Financial Year Comparison",
+            "desc": "Side-by-side FY24/25 vs FY25/26 dashboard: spend, income, savings rate, tax, super, and top categories for each year.",
+            "priority": "medium",
+            "chat_prompt": "Let's build a financial year comparison view for FY24/25 vs FY25/26",
+        },
+        {
+            "title": "ATO Pre-Fill Tax Summary",
+            "desc": "Generate a structured tax return summary using your payslip YTD data, deductible expenses, CGT events, and dividend income — ready to cross-check against MyGov pre-fill.",
+            "priority": "medium",
+            "chat_prompt": "Let's build an ATO pre-fill style tax summary using all our payslip and transaction data",
         },
         {
             "title": "Round-Up Savings Tracker",
-            "desc": "Track round-up amounts from transactions and automatically contribute to a savings goal.",
+            "desc": "Round each transaction up to the nearest dollar, accumulate the difference, and track it as an auto-contribution to a savings goal.",
             "priority": "low",
-            "chat_prompt": "Let's add a round-up savings tracker that feeds into goals",
+            "chat_prompt": "Let's add a round-up savings tracker that auto-feeds a chosen savings goal",
+        },
+        {
+            "title": "Overseas Spend Analyser",
+            "desc": "Break down spending by country and currency. Show total VISA foreign transaction fees paid and identify the highest-fee merchants.",
+            "priority": "low",
+            "chat_prompt": "Let's build an overseas spend analyser showing spend by country, currency, and total FX fees",
+        },
+        {
+            "title": "Bill Renewal Reminders",
+            "desc": "Track contract end dates for electricity, internet, and insurance. Send HA push alerts 45 days before expiry so you have time to negotiate or switch.",
+            "priority": "low",
+            "chat_prompt": "Let's add contract renewal reminders for utilities/insurance with HA push alerts",
+        },
+        {
+            "title": "Salary Packaging Calculator",
+            "desc": "Model FBT, salary sacrifice into super, and novated lease scenarios. Compare take-home pay under different packaging arrangements for both employers.",
+            "priority": "low",
+            "chat_prompt": "Let's build a salary packaging calculator for FBT and super sacrifice scenarios",
+        },
+        {
+            "title": "Income Tax Optimiser",
+            "desc": "Given your two employers and current YTD figures, model whether adjusting PAYG withholding or making deductible contributions would reduce your end-of-year tax bill.",
+            "priority": "low",
+            "chat_prompt": "Let's build an income tax optimiser that models PAYG adjustments and concessional contributions",
         },
     ]
 
-    # ── Feature suggestions from market-leading apps ──
-    FEATURE_SUGGESTIONS = [
+    # Rotate through roadmap pool by ISO week so a different set shows each week
+    _week_num = today.isocalendar()[1]
+    _roadmap_start = (_week_num * 3) % len(_ROADMAP_POOL)
+    _roadmap_rotated = (_ROADMAP_POOL[_roadmap_start:] + _ROADMAP_POOL[:_roadmap_start])
+    ROADMAP_ITEMS = _roadmap_rotated[:4]
+
+    # ── Feature suggestions — rotating pool from market-leading apps ──
+    _SUGGESTIONS_POOL = [
         {
             "app": "Frollo",
-            "feature": "Spending Insights Push Alerts",
-            "desc": "Real-time HA notification when you hit 80% of a budget category during the month.",
-            "chat_prompt": "Let's add HA push alerts when budget categories hit 80%",
+            "feature": "Budget 80% Push Alerts",
+            "desc": "HA notification the moment you hit 80% of any budget category — gives you time to course-correct before month end.",
+            "chat_prompt": "Let's add real-time HA push alerts when any budget category reaches 80%",
         },
         {
             "app": "Splitwise",
             "feature": "Shared Expense Splitting",
-            "desc": "Split transactions with Karina — track who owes what and settle up monthly.",
-            "chat_prompt": "Let's add shared expense splitting for joint costs with Karina",
+            "desc": "Split transactions with Karina — log who paid, who owes what, and generate a monthly settlement summary.",
+            "chat_prompt": "Let's add shared expense splitting between Ryan and Karina with monthly settlement",
         },
         {
             "app": "Sharesight",
-            "feature": "Portfolio Performance vs Benchmark",
-            "desc": "Compare your share portfolio return vs ASX 200 or a custom benchmark over time.",
-            "chat_prompt": "Let's add benchmark comparison charts to the investments page",
+            "feature": "Portfolio vs ASX 200 Benchmark",
+            "desc": "Compare your share portfolio's time-weighted return against the ASX 200 or S&P 500 for any date range.",
+            "chat_prompt": "Let's add benchmark comparison charts to the investments page — TWR vs ASX 200",
         },
         {
-            "app": "MoneyBrilliant",
-            "feature": "Net Worth Forecast",
-            "desc": "Project net worth 1, 3, and 5 years out based on current savings rate and investment returns.",
-            "chat_prompt": "Let's build a net worth forecast chart with 1/3/5 year projections",
+            "app": "Sharesight",
+            "feature": "Tax-Loss Harvesting Alerts",
+            "desc": "Flag positions sitting at an unrealised loss before 30 June — surfaces opportunities to crystallise losses and offset capital gains.",
+            "chat_prompt": "Let's add a 30-June tax-loss harvesting alert that flags positions with unrealised losses",
+        },
+        {
+            "app": "YNAB",
+            "feature": "Rolling 12-Month Savings Rate",
+            "desc": "Show savings rate as a 12-month rolling average — smooths out lumpy income months and gives a clearer trend.",
+            "chat_prompt": "Let's add a 12-month rolling savings rate chart on the dashboard",
+        },
+        {
+            "app": "Copilot",
+            "feature": "Month-End Spend Forecast",
+            "desc": "Based on spend-per-day so far, project what each category will total by the 31st. Shown as a progress bar vs budget.",
+            "chat_prompt": "Let's add a month-end spend forecast that projects category totals based on daily pace",
+        },
+        {
+            "app": "Revolut",
+            "feature": "Auto Subscription Detection",
+            "desc": "Automatically identify recurring payments from transaction patterns — no manual entry. Show upcoming charges and month-over-month changes.",
+            "chat_prompt": "Let's auto-detect subscriptions from transaction patterns and display upcoming charges",
+        },
+        {
+            "app": "Wise",
+            "feature": "FX Rate Watchlist",
+            "desc": "Set target AUD/USD (or other) rates and get an HA notification when the rate is reached — handy when planning overseas travel or transfers.",
+            "chat_prompt": "Let's add an FX rate watchlist with HA alerts when target rates are reached",
+        },
+        {
+            "app": "PocketSmith",
+            "feature": "Cash Flow Calendar",
+            "desc": "Show projected daily account balance for the next 90 days — plotting known bills, estimated income, and recurring expenses on a calendar.",
+            "chat_prompt": "Let's build a 90-day cash flow calendar with projected daily balances",
+        },
+        {
+            "app": "Bricklet",
+            "feature": "Investment Property Tracker",
+            "desc": "Track property value estimates, rental income, expenses, depreciation, and net yield — feeds into net worth and tax pages.",
+            "chat_prompt": "Let's add an investment property tracker for rental income, expenses, and yield",
         },
     ]
+
+    _suggestions_start = (_week_num * 7) % len(_SUGGESTIONS_POOL)
+    _suggestions_rotated = (_SUGGESTIONS_POOL[_suggestions_start:] + _SUGGESTIONS_POOL[:_suggestions_start])
+    FEATURE_SUGGESTIONS = _suggestions_rotated[:3]
 
     return {
         "generated_at": str(today),

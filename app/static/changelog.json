@@ -1,5 +1,29 @@
 [
   {
+    "date": "2026-03-06",
+    "version": "v41",
+    "title": "Gmail Import History + Cross-Source Dedup + Duplicate Detector",
+    "items": [
+      "Import History: every Gmail scan now logs date, since-date, payslips, expenses, matched and skipped counts — visible in both Import page and Settings → Gmail",
+      "Cross-source dedup (Gmail → CSV): if Gmail import finds an expense already in the DB from a bank CSV import (same amount ±2%, date ±2 days), it skips creating a duplicate and attaches the receipt to the existing transaction instead",
+      "Cross-source dedup (CSV → Gmail): bank CSV imports now skip rows that already exist as Gmail-imported transactions (same amount ±2%, date ±1 day)",
+      "Duplicate Detector: new 'Scan for Duplicates' tool on Import page — scans all transactions for cross-source pairs and lets you merge them (keep Gmail or keep CSV, with receipt/account transfer)",
+      "Gap analysis: Import History table highlights scans with errors in red, shows total coverage dates and cumulative import counts",
+      "Service worker bumped to ft-v41"
+    ]
+  },
+  {
+    "date": "2026-03-05",
+    "version": "v40",
+    "title": "Multi-employer tax estimate fix + background scan improvements",
+    "items": [
+      "Tax estimate now sums individual payslip amounts across all employers when multi-employer detected (previously used single-employer YTD field)",
+      "Added multi_employer flag and employer_count to tax estimate response",
+      "Gmail scan background task: receipt paths stored as relative paths (fixes 'detail not found' on receipt view)",
+      "Service worker bumped to ft-v40"
+    ]
+  },
+  {
     "date": "2026-03-05",
     "version": "v37",
     "title": "Gmail Label Discovery + Import Page Overhaul",

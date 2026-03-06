@@ -581,7 +581,7 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
 
     results: dict = {
         "payslips": {"processed": 0, "skipped": 0, "errors": []},
-        "expenses": {"processed": 0, "skipped": 0, "errors": []},
+        "expenses": {"processed": 0, "skipped": 0, "matched": 0, "errors": []},
         "since_date": since_date,
     }
 
@@ -696,6 +696,40 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
                     except Exception:
                         txn_date = date.today()
 
+                    # Cross-source dedup: skip if a bank CSV import already has this purchase
+                    is_credit_item = bool(item.get("is_credit", False))
+                    if not is_credit_item:
+                        lo = txn_date - timedelta(days=2)
+                        hi = txn_date + timedelta(days=2)
+                        csv_candidates = session.exec(
+                            select(Transaction).where(
+                                Transaction.user_id == user_id,
+                                Transaction.date >= lo,
+                                Transaction.date <= hi,
+                                Transaction.is_credit == False,
+                                Transaction.amount >= amount * 0.98,
+                                Transaction.amount <= amount * 1.02,
+                                Transaction.raw_hash.notlike("gmail:%"),
+                            )
+                        ).all()
+                        cross_match = None
+                        if csv_candidates:
+                            desc = item.get("description", "")
+                            for c in csv_candidates:
+                                if _fuzzy_merchant_match(desc, c.description):
+                                    cross_match = c
+                                    break
+                            if not cross_match and len(csv_candidates) == 1:
+                                cross_match = csv_candidates[0]
+                        if cross_match:
+                            # Attach receipt to existing CSV transaction if it doesn't have one yet
+                            msg_receipts = receipt_files.get(item.get("message_id", ""), [])
+                            if msg_receipts and not cross_match.receipt_path:
+                                cross_match.receipt_path = msg_receipts[0]
+                                session.add(cross_match)
+                            results["expenses"]["matched"] += 1
+                            continue
+
                     cat_name = item.get("suggested_category", "")
                     cat = cat_map.get(cat_name.lower()) or uncat
                     ai_deductible = bool(item.get("is_tax_deductible", False))
@@ -728,6 +762,26 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
 
         except Exception as e:
             results["expenses"]["errors"].append(str(e))
+
+    # Append to import history (keep last 20 scans)
+    history_raw = get_setting(session, "gmail_import_history") or "[]"
+    try:
+        history = json.loads(history_raw)
+    except Exception:
+        history = []
+    history.insert(0, {
+        "ts": datetime.now().isoformat(timespec="seconds"),
+        "since_date": since_date,
+        "payslips_imported": results["payslips"]["processed"],
+        "payslips_skipped": results["payslips"]["skipped"],
+        "expenses_imported": results["expenses"]["processed"],
+        "expenses_matched": results["expenses"]["matched"],
+        "expenses_skipped": results["expenses"]["skipped"],
+        "errors": len(results["payslips"]["errors"]) + len(results["expenses"]["errors"]),
+    })
+    if len(history) > 20:
+        history = history[:20]
+    set_setting(session, "gmail_import_history", json.dumps(history))
 
     set_setting(session, "gmail_last_scan", datetime.now().isoformat())
     return {"ok": True, "results": results}
@@ -873,6 +927,20 @@ def gmail_scan_status(
         "running": running,
         "last_result": last_result,
     }
+
+
+@router.get("/import-history")
+def get_import_history(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Return the last 20 Gmail scan results."""
+    raw = get_setting(session, "gmail_import_history") or "[]"
+    try:
+        history = json.loads(raw)
+    except Exception:
+        history = []
+    return {"history": history}
 
 
 class AutoScanRequest(BaseModel):
@@ -1185,6 +1253,96 @@ def correlate_receipts(
         "unmatched": unmatched,
         "already_receipted": already_receipted,
     }
+
+
+@router.get("/dedup-scan")
+def dedup_scan(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Find potential cross-source duplicates: same purchase imported from both Gmail and a bank CSV."""
+    txns = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.is_credit == False,
+        ).order_by(Transaction.date)
+    ).all()
+
+    duplicates = []
+    seen_ids: set[int] = set()
+    for i, t1 in enumerate(txns):
+        if t1.id in seen_ids:
+            continue
+        t1_gmail = bool(t1.raw_hash and t1.raw_hash.startswith("gmail:"))
+        for t2 in txns[i + 1:]:
+            if t2.id in seen_ids:
+                continue
+            days_diff = (t2.date - t1.date).days
+            if days_diff > 3:
+                break  # txns are date-ordered; no point checking further
+            t2_gmail = bool(t2.raw_hash and t2.raw_hash.startswith("gmail:"))
+            if t1_gmail == t2_gmail:
+                continue  # both same source — not a cross-source dupe
+            if max(t1.amount, t2.amount) == 0:
+                continue
+            amt_diff_pct = abs(t1.amount - t2.amount) / max(t1.amount, t2.amount)
+            if amt_diff_pct > 0.02:
+                continue
+            gmail_txn = t1 if t1_gmail else t2
+            csv_txn   = t2 if t1_gmail else t1
+            duplicates.append({
+                "gmail_txn": {
+                    "id": gmail_txn.id,
+                    "date": str(gmail_txn.date),
+                    "description": gmail_txn.description,
+                    "amount": gmail_txn.amount,
+                    "receipt_path": gmail_txn.receipt_path,
+                },
+                "csv_txn": {
+                    "id": csv_txn.id,
+                    "date": str(csv_txn.date),
+                    "description": csv_txn.description,
+                    "amount": csv_txn.amount,
+                    "receipt_path": csv_txn.receipt_path,
+                    "account_id": csv_txn.account_id,
+                },
+            })
+            seen_ids.add(t1.id)
+            seen_ids.add(t2.id)
+            break
+
+    return {"duplicates": duplicates, "count": len(duplicates)}
+
+
+class DedupMergeRequest(BaseModel):
+    keep_id: int
+    delete_id: int
+
+
+@router.post("/dedup-merge")
+def dedup_merge(
+    body: DedupMergeRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Merge two duplicate transactions: keep one, delete the other.
+    Transfers receipt and account_id to the kept record if needed."""
+    keep   = session.get(Transaction, body.keep_id)
+    delete = session.get(Transaction, body.delete_id)
+    if not keep or not delete:
+        raise HTTPException(404, "Transaction not found")
+    if keep.user_id != current_user.id or delete.user_id != current_user.id:
+        raise HTTPException(403, "Not your transaction")
+    # Transfer receipt from the deleted record if the kept one has none
+    if not keep.receipt_path and delete.receipt_path:
+        keep.receipt_path = delete.receipt_path
+    # Transfer account info if the kept one is missing it
+    if not keep.account_id and delete.account_id:
+        keep.account_id = delete.account_id
+    session.add(keep)
+    session.delete(delete)
+    session.commit()
+    return {"ok": True, "kept_id": keep.id}
 
 
 def _item_summary(item: dict) -> dict:

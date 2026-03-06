@@ -1459,6 +1459,110 @@
             Set scan date to <strong>01/07/2024</strong> for FY24/25 backfill, or <strong>01/07/2025</strong> for FY25/26.
             Labels are configured in Settings → Gmail.
           </div>
+          <!-- Import History -->
+          <template x-if="gmailImportHistory.length > 0">
+            <div style="margin-top:14px;border-top:1px solid var(--border);padding-top:12px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                <div style="font-size:12px;font-weight:600;color:var(--text);">Import History</div>
+                <div style="font-size:11px;color:var(--muted);">
+                  Coverage: <span x-text="gmailImportHistory.length > 0 ? 'since ' + gmailImportHistory[gmailImportHistory.length-1].since_date : '—'"></span>
+                  &nbsp;·&nbsp;
+                  <span x-text="gmailImportHistory.reduce((s,h)=>s+(h.payslips_imported||0),0)"></span> payslips,
+                  <span x-text="gmailImportHistory.reduce((s,h)=>s+(h.expenses_imported||0),0)"></span> expenses imported total
+                </div>
+              </div>
+              <div x-show="gmailImportHistory.some(h=>h.errors>0)" style="font-size:11px;color:var(--red);margin-bottom:6px;padding:4px 8px;background:rgba(239,68,68,.08);border-radius:6px;">
+                Some scans had errors — see highlighted rows below
+              </div>
+              <div style="overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                  <thead>
+                    <tr style="color:var(--muted);">
+                      <th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--border);white-space:nowrap;">Scanned</th>
+                      <th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--border);white-space:nowrap;">Since</th>
+                      <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Payslips imported">Slips</th>
+                      <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Expenses imported">Exp</th>
+                      <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Matched to existing CSV transactions">Match</th>
+                      <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Skipped (already exists)">Skip</th>
+                      <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Errors">Err</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="(h, i) in gmailImportHistory" :key="i">
+                      <tr :style="h.errors > 0 ? 'background:rgba(239,68,68,.06)' : (i%2===0 ? '' : 'background:var(--surf2)')">
+                        <td style="padding:3px 8px;white-space:nowrap;" x-text="new Date(h.ts).toLocaleString()"></td>
+                        <td style="padding:3px 8px;color:var(--muted);white-space:nowrap;" x-text="h.since_date"></td>
+                        <td style="padding:3px 8px;text-align:center;" x-text="h.payslips_imported"></td>
+                        <td style="padding:3px 8px;text-align:center;" :style="h.expenses_imported > 0 ? 'color:var(--green);font-weight:600' : ''" x-text="h.expenses_imported"></td>
+                        <td style="padding:3px 8px;text-align:center;" :style="(h.expenses_matched||0) > 0 ? 'color:var(--amber)' : 'color:var(--muted)'" x-text="h.expenses_matched || 0"></td>
+                        <td style="padding:3px 8px;text-align:center;color:var(--muted);" x-text="(h.payslips_skipped||0) + (h.expenses_skipped||0)"></td>
+                        <td style="padding:3px 8px;text-align:center;" :style="h.errors > 0 ? 'color:var(--red);font-weight:600' : 'color:var(--muted)'" x-text="h.errors"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </template>
+        </div>
+
+        <!-- Duplicate Detector -->
+        <div class="card" style="margin-top:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:12px;">
+            <div>
+              <div class="section-title" style="margin-bottom:2px;">Duplicate Detector</div>
+              <div style="font-size:12px;color:var(--muted);">Finds transactions imported from both Gmail and a bank CSV that appear to be the same purchase</div>
+            </div>
+            <button @click="runDedupScan()" class="btn btn-ghost btn-sm" :disabled="gmailDedupLoading">
+              <span x-show="!gmailDedupLoading">Scan for Duplicates</span>
+              <span x-show="gmailDedupLoading">Scanning…</span>
+            </button>
+          </div>
+          <div x-show="gmailDedupResults?.error" class="alert alert-error" x-text="gmailDedupResults?.error"></div>
+          <template x-if="gmailDedupResults && !gmailDedupResults.error">
+            <div>
+              <div style="font-size:13px;margin-bottom:10px;">
+                <span x-show="gmailDedupResults.count === 0" style="color:var(--green);">No cross-source duplicates found — your data looks clean.</span>
+                <span x-show="gmailDedupResults.count > 0" :style="'color:var(--amber);font-weight:600'" x-text="`${gmailDedupResults.count} potential duplicate${gmailDedupResults.count > 1 ? 's' : ''} found`"></span>
+              </div>
+              <template x-if="gmailDedupResults.count > 0">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                  <div style="font-size:11px;color:var(--muted);padding:6px 10px;background:var(--surf2);border-radius:6px;">
+                    Each pair below appears to be the same purchase imported from two sources.
+                    <strong>Keep Gmail</strong> retains the receipt; <strong>Keep CSV</strong> keeps the bank account linkage. The other record is deleted.
+                  </div>
+                  <template x-for="(dup, i) in gmailDedupResults.duplicates" :key="i">
+                    <div style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;">
+                      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;margin-bottom:10px;">
+                        <div style="padding:8px 10px;background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:6px;">
+                          <div style="font-size:10px;font-weight:700;color:var(--accent);margin-bottom:4px;letter-spacing:.05em;">GMAIL</div>
+                          <div style="font-weight:600;" x-text="dup.gmail_txn.description"></div>
+                          <div style="color:var(--muted);" x-text="`${dup.gmail_txn.date} · $${dup.gmail_txn.amount.toFixed(2)}`"></div>
+                          <div x-show="dup.gmail_txn.receipt_path" style="color:var(--green);font-size:10px;margin-top:2px;">Has receipt</div>
+                        </div>
+                        <div style="padding:8px 10px;background:var(--surf2);border:1px solid var(--border);border-radius:6px;">
+                          <div style="font-size:10px;font-weight:700;color:var(--muted);margin-bottom:4px;letter-spacing:.05em;">BANK CSV</div>
+                          <div style="font-weight:600;" x-text="dup.csv_txn.description"></div>
+                          <div style="color:var(--muted);" x-text="`${dup.csv_txn.date} · $${dup.csv_txn.amount.toFixed(2)}`"></div>
+                          <div x-show="dup.csv_txn.receipt_path" style="color:var(--green);font-size:10px;margin-top:2px;">Has receipt</div>
+                        </div>
+                      </div>
+                      <div style="display:flex;gap:8px;">
+                        <button @click="mergeDuplicate(dup.gmail_txn.id, dup.csv_txn.id, i)" class="btn btn-ghost btn-sm"
+                          :disabled="gmailDedupMerging[`${dup.gmail_txn.id}_${dup.csv_txn.id}`]">
+                          Keep Gmail, delete CSV
+                        </button>
+                        <button @click="mergeDuplicate(dup.csv_txn.id, dup.gmail_txn.id, i)" class="btn btn-ghost btn-sm"
+                          :disabled="gmailDedupMerging[`${dup.csv_txn.id}_${dup.gmail_txn.id}`]">
+                          Keep CSV, delete Gmail
+                        </button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+            </div>
+          </template>
         </div>
 
         <!-- Gmail Receipt Correlation -->
@@ -4668,6 +4772,51 @@
                 <button @click="gmailAutoScan(gmailHistoricalDate)" class="btn btn-ghost btn-sm" :disabled="gmailScanning || !gmailHistoricalDate">Scan from date</button>
                 <div style="font-size:11px;color:var(--muted);width:100%;">Use this for first-time setup or to backfill a financial year (e.g. 2024-07-01 for FY24/25)</div>
               </div>
+              <!-- Import History in Settings -->
+              <template x-if="gmailImportHistory.length > 0">
+                <div style="border-top:1px solid var(--border);padding-top:12px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
+                    <div style="font-size:12px;font-weight:600;color:var(--text);">Import History (last 20 scans)</div>
+                    <div style="font-size:11px;color:var(--muted);">
+                      Coverage since <span x-text="gmailImportHistory.length > 0 ? gmailImportHistory[gmailImportHistory.length-1].since_date : '—'"></span>
+                      &nbsp;·&nbsp;
+                      <span x-text="gmailImportHistory.reduce((s,h)=>s+(h.expenses_imported||0),0)"></span> expenses,
+                      <span x-text="gmailImportHistory.reduce((s,h)=>s+(h.payslips_imported||0),0)"></span> payslips total
+                    </div>
+                  </div>
+                  <div x-show="gmailImportHistory.some(h=>h.errors>0)" style="font-size:11px;color:var(--red);margin-bottom:6px;padding:4px 8px;background:rgba(239,68,68,.08);border-radius:6px;">
+                    Some scans had errors — check them below
+                  </div>
+                  <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:11px;">
+                      <thead>
+                        <tr style="color:var(--muted);">
+                          <th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--border);white-space:nowrap;">Scanned</th>
+                          <th style="text-align:left;padding:3px 8px;border-bottom:1px solid var(--border);">Since</th>
+                          <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Payslips">Slips</th>
+                          <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Expenses imported">Exp</th>
+                          <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Matched to CSV">Match</th>
+                          <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Skipped">Skip</th>
+                          <th style="text-align:center;padding:3px 8px;border-bottom:1px solid var(--border);" title="Errors">Err</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="(h, i) in gmailImportHistory" :key="i">
+                          <tr :style="h.errors > 0 ? 'background:rgba(239,68,68,.06)' : (i%2===0 ? '' : 'background:var(--surf2)')">
+                            <td style="padding:3px 8px;white-space:nowrap;" x-text="new Date(h.ts).toLocaleString()"></td>
+                            <td style="padding:3px 8px;color:var(--muted);white-space:nowrap;" x-text="h.since_date"></td>
+                            <td style="padding:3px 8px;text-align:center;" x-text="h.payslips_imported"></td>
+                            <td style="padding:3px 8px;text-align:center;" :style="h.expenses_imported > 0 ? 'color:var(--green);font-weight:600' : ''" x-text="h.expenses_imported"></td>
+                            <td style="padding:3px 8px;text-align:center;" :style="(h.expenses_matched||0) > 0 ? 'color:var(--amber)' : 'color:var(--muted)'" x-text="h.expenses_matched || 0"></td>
+                            <td style="padding:3px 8px;text-align:center;color:var(--muted);" x-text="(h.payslips_skipped||0) + (h.expenses_skipped||0)"></td>
+                            <td style="padding:3px 8px;text-align:center;" :style="h.errors > 0 ? 'color:var(--red);font-weight:600' : 'color:var(--muted)'" x-text="h.errors"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </template>
             </div>
           </div>
 
@@ -7095,6 +7244,10 @@ function app() {
     gmailHistoricalDate: '2024-07-01',
     gmailLabels: [],
     gmailLabelsLoading: false,
+    gmailImportHistory: [],
+    gmailDedupResults: null,
+    gmailDedupLoading: false,
+    gmailDedupMerging: {},
     enriching: false,
     enrichResult: null,
     zbbSummary: null,
@@ -9711,6 +9864,14 @@ function app() {
           await this._pollGmailScan();
         }
       } catch { this.gmailScanStatus = null; }
+      await this.loadGmailImportHistory();
+    },
+
+    async loadGmailImportHistory() {
+      try {
+        const data = await this.api('/api/gmail/import-history');
+        this.gmailImportHistory = data.history || [];
+      } catch { this.gmailImportHistory = []; }
     },
 
     async listGmailLabels() {
@@ -9753,6 +9914,7 @@ function app() {
               const parts = [];
               if ((r.payslips?.processed || 0) > 0) parts.push(`${r.payslips.processed} payslip${r.payslips.processed > 1 ? 's' : ''} imported`);
               if ((r.expenses?.processed || 0) > 0) parts.push(`${r.expenses.processed} expense${r.expenses.processed > 1 ? 's' : ''} imported`);
+              if ((r.expenses?.matched || 0) > 0) parts.push(`${r.expenses.matched} matched to existing`);
               const skipped = (r.payslips?.skipped || 0) + (r.expenses?.skipped || 0);
               if (skipped > 0) parts.push(`${skipped} skipped`);
               this.gmailScanResult = parts.length ? parts.join(', ') : 'Scan complete — nothing new found';
@@ -9760,6 +9922,7 @@ function app() {
               if (allErrors.length) this.gmailScanError = allErrors.slice(0, 2).join('; ');
             }
             await this.loadDashboard();
+            await this.loadGmailImportHistory();
             this.gmailScanning = false;
             return;
           }
@@ -9769,6 +9932,35 @@ function app() {
       }
       this.gmailScanResult = 'Scan taking longer than expected — check back later';
       this.gmailScanning = false;
+    },
+
+    async runDedupScan() {
+      this.gmailDedupLoading = true; this.gmailDedupResults = null; this.gmailDedupMerging = {};
+      try {
+        const data = await this.api('/api/gmail/dedup-scan');
+        this.gmailDedupResults = data;
+      } catch (e) {
+        this.gmailDedupResults = { error: e?.message || 'Scan failed' };
+      } finally { this.gmailDedupLoading = false; }
+    },
+
+    async mergeDuplicate(keepId, deleteId, index) {
+      const key = `${keepId}_${deleteId}`;
+      this.gmailDedupMerging = { ...this.gmailDedupMerging, [key]: true };
+      try {
+        await this.api('/api/gmail/dedup-merge', { method: 'POST', body: JSON.stringify({ keep_id: keepId, delete_id: deleteId }) });
+        // Remove merged pair from results
+        if (this.gmailDedupResults?.duplicates) {
+          this.gmailDedupResults.duplicates.splice(index, 1);
+          this.gmailDedupResults.count = this.gmailDedupResults.duplicates.length;
+        }
+        await this.loadDashboard();
+      } catch (e) {
+        alert(e?.message || 'Merge failed');
+      } finally {
+        const m = { ...this.gmailDedupMerging }; delete m[key];
+        this.gmailDedupMerging = m;
+      }
     },
 
     async scanGmailPreview() {

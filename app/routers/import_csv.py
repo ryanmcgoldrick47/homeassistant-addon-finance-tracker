@@ -5,7 +5,7 @@ import hashlib
 import io
 import os
 import shutil
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
@@ -298,6 +298,24 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
             if session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first():
                 skipped += 1
                 continue
+            # Cross-source dedup: skip if Gmail import already has this purchase
+            if not is_credit:
+                date_lo = date_val - timedelta(days=1)
+                date_hi = date_val + timedelta(days=1)
+                gmail_match = session.exec(
+                    select(Transaction).where(
+                        Transaction.user_id == user_id,
+                        Transaction.date >= date_lo,
+                        Transaction.date <= date_hi,
+                        Transaction.is_credit == False,
+                        Transaction.amount >= amount * 0.98,
+                        Transaction.amount <= amount * 1.02,
+                        Transaction.raw_hash.like("gmail:%"),
+                    )
+                ).first()
+                if gmail_match:
+                    skipped += 1
+                    continue
             is_overseas, currency_code = _detect_overseas(description)
             session.add(Transaction(
                 account_id=account_id, date=date_val, description=description,
