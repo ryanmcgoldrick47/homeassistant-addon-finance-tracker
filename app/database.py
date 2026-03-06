@@ -387,6 +387,18 @@ class Loan(SQLModel, table=True):
     user_id:                int = 1
 
 
+class LoanPayment(SQLModel, table=True):
+    """Records an actual repayment made against a loan (regular or extra)."""
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    loan_id:      int = Field(foreign_key="loan.id")
+    payment_date: date
+    amount_cents: int                         # total payment amount (cents)
+    principal_cents: int = 0                  # portion reducing balance
+    interest_cents:  int = 0                  # portion that is interest
+    notes:        Optional[str] = None        # e.g. "extra repayment", "refinance"
+    user_id:      int = 1
+
+
 # ---------------------------------------------------------------------------
 # Default seed data
 # ---------------------------------------------------------------------------

@@ -202,6 +202,9 @@ async def ocr_receipt(
         amount_aud = float(extracted.get("amount_aud") or 0) or (amount if currency == "AUD" else None)
     except (ValueError, TypeError):
         amount_aud = amount if currency == "AUD" else None
+    # Auto-convert foreign currency to AUD if AI couldn't determine rate
+    if currency != "AUD" and not amount_aud and amount > 0:
+        amount_aud = _fx_to_aud(currency, amount, date.today())
     receipt_date_str = extracted.get("date") or date.today().isoformat()
     category_name = extracted.get("category", "")
     notes = extracted.get("notes", "")
@@ -388,6 +391,28 @@ async def ocr_attach(
     session.commit()
 
     return {"ok": True, "txn_id": txn.id, "filename": filename, "created": not bool(txn_id)}
+
+
+def _fx_to_aud(currency: str, amount: float, receipt_date: date) -> float | None:
+    """Convert amount in foreign currency to AUD using frankfurter.app (free, no key)."""
+    if currency == "AUD" or amount <= 0:
+        return amount
+    import urllib.request, urllib.error
+    try:
+        date_str = receipt_date.isoformat()
+        url = f"https://api.frankfurter.app/{date_str}?from={currency}&to=AUD&amount={amount}"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            data = json.loads(resp.read())
+            return round(float(data["rates"]["AUD"]), 2)
+    except Exception:
+        # Try latest rate as fallback
+        try:
+            url = f"https://api.frankfurter.app/latest?from={currency}&to=AUD&amount={amount}"
+            with urllib.request.urlopen(url, timeout=5) as resp:
+                data = json.loads(resp.read())
+                return round(float(data["rates"]["AUD"]), 2)
+        except Exception:
+            return None
 
 
 def _ocr_with_ai(content: bytes, mime_type: str, provider: str, api_key: str) -> dict:

@@ -1318,7 +1318,7 @@
                 <input type="number" x-model="ocrResult.extracted.amount_aud" step="0.01" min="0"
                   style="flex:1;" placeholder="Enter AUD amount" />
               </div>
-              <div style="font-size:11px;color:var(--muted);width:100%;">The Amount (AUD $) field above is used for the transaction. The original currency is stored in notes.</div>
+              <div style="font-size:11px;color:var(--muted);width:100%;">AUD equivalent auto-converted via live exchange rate. You can adjust if needed. Original currency is stored in the transaction notes.</div>
             </div>
 
             <!-- Flags row -->
@@ -4538,7 +4538,10 @@
                     <span style="font-weight:700;font-size:15px;" x-text="loan.name"></span>
                     <span style="font-size:11px;padding:2px 7px;border-radius:99px;background:var(--surf2);color:var(--muted);" x-text="loan.loan_type"></span>
                   </div>
-                  <div style="font-size:12px;color:var(--muted);margin-top:3px;" x-text="loan.interest_rate + '% p.a. · ' + loan.term_months + ' month term'"></div>
+                  <div style="font-size:12px;color:var(--muted);margin-top:3px;">
+                    <span x-text="loan.interest_rate + '% p.a. · ' + loan.term_months + ' month term'"></span>
+                    <span style="margin-left:6px;font-size:11px;opacity:0.6;">(use Edit to update rate)</span>
+                  </div>
                 </div>
                 <div style="display:flex;gap:6px;">
                   <button @click="openEditLoan(loan)" class="btn btn-ghost btn-sm">Edit</button>
@@ -4579,9 +4582,12 @@
                     :style="'width:'+Math.max(0,Math.round((1 - loan.outstanding / loan.principal)*100))+'%'"></div>
                 </div>
               </div>
-              <!-- Extra repayment calculator -->
+              <!-- Extra repayment calculator (simulation only) -->
               <div style="margin-bottom:10px;">
-                <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px;">Extra Repayment Calculator</div>
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                  <span style="font-size:12px;color:var(--muted);font-weight:600;">Extra Repayment Simulator</span>
+                  <span style="font-size:10px;color:var(--muted);background:var(--surf2);padding:1px 6px;border-radius:99px;">simulation only — does not update loan balance</span>
+                </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
                   <input type="number" placeholder="Extra $/month" style="width:160px;"
                     x-model="loanExtraInput[loan.id]" @keyup.enter="calcLoanExtra(loan.id)" min="0" />
@@ -4607,40 +4613,118 @@
                   </div>
                 </template>
               </div>
+              <!-- Payment history -->
+              <div x-show="loanPayments[loan.id] && loanPayments[loan.id].length > 0" style="margin-bottom:10px;">
+                <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px;">Payment History</div>
+                <div style="display:flex;flex-direction:column;gap:4px;max-height:160px;overflow-y:auto;">
+                  <template x-for="p in (loanPayments[loan.id] || [])" :key="p.id">
+                    <div style="display:flex;align-items:center;justify-content:space-between;font-size:12px;padding:5px 8px;background:var(--surf2);border-radius:6px;">
+                      <span style="color:var(--muted);" x-text="p.payment_date"></span>
+                      <span style="font-weight:600;" x-text="'$'+fmt(p.amount)"></span>
+                      <span x-show="p.notes" style="color:var(--muted);font-style:italic;flex:1;margin:0 8px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="p.notes"></span>
+                      <button @click="deleteLoanPayment(loan.id, p.id)" style="font-size:11px;background:none;border:none;cursor:pointer;color:var(--muted);padding:0 4px;"
+                        @mouseenter="$el.style.color='var(--red)'" @mouseleave="$el.style.color='var(--muted)'">✕</button>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Record payment button + form -->
+              <div style="margin-bottom:10px;">
+                <button @click="loanPaymentFormId = loanPaymentFormId === loan.id ? null : loan.id; loanPaymentForm = { payment_date: new Date().toISOString().slice(0,10), amount: '', principal: '', interest: '', notes: '' }"
+                  class="btn btn-ghost btn-sm" style="font-size:12px;">
+                  <span x-text="loanPaymentFormId === loan.id ? '▲ Cancel' : '+ Record Payment'"></span>
+                </button>
+                <div x-show="loanPaymentFormId === loan.id" style="margin-top:8px;padding:10px;background:var(--surf2);border-radius:8px;">
+                  <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;">
+                    <div><label class="form-label">Date</label>
+                      <input type="date" x-model="loanPaymentForm.payment_date" /></div>
+                    <div><label class="form-label">Total Amount ($)</label>
+                      <input type="number" x-model="loanPaymentForm.amount" placeholder="3500" step="0.01" min="0" /></div>
+                    <div><label class="form-label">Principal ($) <span style="font-size:10px;color:var(--muted);">reduces balance</span></label>
+                      <input type="number" x-model="loanPaymentForm.principal" placeholder="leave blank = full amount" step="0.01" min="0" /></div>
+                    <div><label class="form-label">Interest ($) <span style="font-size:10px;color:var(--muted);">optional</span></label>
+                      <input type="number" x-model="loanPaymentForm.interest" placeholder="0.00" step="0.01" min="0" /></div>
+                  </div>
+                  <input x-model="loanPaymentForm.notes" placeholder="Notes (e.g. extra repayment, lump sum)" style="margin-bottom:8px;" />
+                  <button @click="saveLoanPayment(loan.id)" class="btn btn-primary btn-sm" :disabled="loanPaymentSaving">
+                    <span x-show="!loanPaymentSaving">Save Payment</span>
+                    <span x-show="loanPaymentSaving">Saving…</span>
+                  </button>
+                </div>
+              </div>
+
               <!-- Amortisation toggle -->
               <button @click="toggleLoanAmort(loan.id)" class="btn btn-ghost btn-sm" style="font-size:12px;">
                 <span x-text="loanAmortId === loan.id ? '▲ Hide Schedule' : '▼ Amortisation Schedule'"></span>
               </button>
-              <div x-show="loanAmortId === loan.id" style="margin-top:12px;overflow-x:auto;">
+              <div x-show="loanAmortId === loan.id" style="margin-top:12px;">
                 <div x-show="loanAmortLoading" style="text-align:center;padding:12px;color:var(--muted);">Loading…</div>
                 <template x-if="loanAmort && loanAmortId === loan.id && !loanAmortLoading">
-                  <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                    <thead>
-                      <tr style="color:var(--muted);">
-                        <th style="text-align:left;padding:4px 8px;">Month</th>
-                        <th style="text-align:right;padding:4px 8px;">Payment</th>
-                        <th style="text-align:right;padding:4px 8px;">Principal</th>
-                        <th style="text-align:right;padding:4px 8px;">Interest</th>
-                        <th style="text-align:right;padding:4px 8px;">Balance</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <template x-for="row in loanAmort.slice(0, loanAmortShowAll ? 9999 : 24)" :key="row.month">
-                        <tr style="border-top:1px solid var(--border);">
-                          <td style="padding:4px 8px;" x-text="row.month"></td>
-                          <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.payment)"></td>
-                          <td style="padding:4px 8px;text-align:right;color:var(--green);" x-text="'$'+fmt(row.principal)"></td>
-                          <td style="padding:4px 8px;text-align:right;color:var(--red);" x-text="'$'+fmt(row.interest)"></td>
-                          <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.balance)"></td>
-                        </tr>
-                      </template>
-                    </tbody>
-                  </table>
-                  <template x-if="loanAmort.length > 24">
-                    <button @click="loanAmortShowAll=!loanAmortShowAll" class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:12px;">
-                      <span x-text="loanAmortShowAll ? 'Show Less' : 'Show All '+loanAmort.length+' Months'"></span>
-                    </button>
-                  </template>
+                  <div>
+                    <!-- View toggle -->
+                    <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center;">
+                      <span style="font-size:12px;color:var(--muted);">View:</span>
+                      <button @click="loanAmortView='yearly'" class="btn btn-sm"
+                        :class="loanAmortView==='yearly' ? 'btn-primary' : 'btn-ghost'" style="font-size:11px;padding:3px 10px;">Yearly</button>
+                      <button @click="loanAmortView='monthly'" class="btn btn-sm"
+                        :class="loanAmortView==='monthly' ? 'btn-primary' : 'btn-ghost'" style="font-size:11px;padding:3px 10px;">
+                        Monthly (<span x-text="loanAmort.length"></span> rows)
+                      </button>
+                    </div>
+
+                    <!-- Yearly summary -->
+                    <div x-show="loanAmortView==='yearly'" style="overflow-x:auto;">
+                      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        <thead>
+                          <tr style="color:var(--muted);">
+                            <th style="text-align:left;padding:4px 8px;">Year</th>
+                            <th style="text-align:right;padding:4px 8px;">Total Paid</th>
+                            <th style="text-align:right;padding:4px 8px;">Principal</th>
+                            <th style="text-align:right;padding:4px 8px;">Interest</th>
+                            <th style="text-align:right;padding:4px 8px;">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="row in loanAmortYearly" :key="row.year">
+                            <tr style="border-top:1px solid var(--border);">
+                              <td style="padding:4px 8px;" x-text="'Yr ' + row.year"></td>
+                              <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.payment)"></td>
+                              <td style="padding:4px 8px;text-align:right;color:var(--green);" x-text="'$'+fmt(row.principal)"></td>
+                              <td style="padding:4px 8px;text-align:right;color:var(--red);" x-text="'$'+fmt(row.interest)"></td>
+                              <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.balance)"></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+
+                    <!-- Monthly detail (scrollable) -->
+                    <div x-show="loanAmortView==='monthly'" style="max-height:400px;overflow-y:auto;overflow-x:auto;">
+                      <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                        <thead style="position:sticky;top:0;background:var(--surf1);z-index:1;">
+                          <tr style="color:var(--muted);">
+                            <th style="text-align:left;padding:4px 8px;">Month</th>
+                            <th style="text-align:right;padding:4px 8px;">Payment</th>
+                            <th style="text-align:right;padding:4px 8px;">Principal</th>
+                            <th style="text-align:right;padding:4px 8px;">Interest</th>
+                            <th style="text-align:right;padding:4px 8px;">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          <template x-for="row in loanAmort" :key="row.month">
+                            <tr style="border-top:1px solid var(--border);">
+                              <td style="padding:4px 8px;" x-text="row.month"></td>
+                              <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.payment)"></td>
+                              <td style="padding:4px 8px;text-align:right;color:var(--green);" x-text="'$'+fmt(row.principal)"></td>
+                              <td style="padding:4px 8px;text-align:right;color:var(--red);" x-text="'$'+fmt(row.interest)"></td>
+                              <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.balance)"></td>
+                            </tr>
+                          </template>
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
                 </template>
               </div>
             </div>
@@ -7610,10 +7694,14 @@ function app() {
     loanAmortId: null,
     loanAmort: null,
     loanAmortLoading: false,
-    loanAmortShowAll: false,
+    loanAmortView: 'yearly',   // 'yearly' | 'monthly'
     loanExtraInput: {},
     loanExtraResult: {},
     loanExtraLoading: {},
+    loanPayments: {},          // { [loanId]: [{...}] }
+    loanPaymentFormId: null,   // which loan's payment form is open
+    loanPaymentForm: { payment_date: new Date().toISOString().slice(0,10), amount: '', principal: '', interest: '', notes: '' },
+    loanPaymentSaving: false,
 
     // Data
     dashMonth: new Date().getMonth() + 1,
@@ -9515,6 +9603,12 @@ function app() {
       this.loansLoading = true;
       try {
         this.loans = await this.api('/api/loans') || [];
+        // Pre-seed input keys so Alpine.js x-model reactivity works on existing keys
+        const inputs = {};
+        this.loans.forEach(l => { inputs[l.id] = this.loanExtraInput[l.id] || ''; });
+        this.loanExtraInput = inputs;
+        // Load payment history for each loan
+        await Promise.all(this.loans.map(l => this.loadLoanPayments(l.id)));
       } finally {
         this.loansLoading = false;
       }
@@ -9575,7 +9669,7 @@ function app() {
       this.loanAmortId = id;
       this.loanAmort = null;
       this.loanAmortLoading = true;
-      this.loanAmortShowAll = false;
+      this.loanAmortView = 'yearly';
       try {
         const data = await this.api(`/api/loans/${id}/amortisation`);
         this.loanAmort = data.schedule || [];
@@ -9583,9 +9677,62 @@ function app() {
         this.loanAmortLoading = false;
       }
     },
+    get loanAmortYearly() {
+      if (!this.loanAmort) return [];
+      const years = {};
+      for (const row of this.loanAmort) {
+        const yr = Math.ceil(row.month / 12);
+        if (!years[yr]) years[yr] = { year: yr, payment: 0, principal: 0, interest: 0, balance: 0 };
+        years[yr].payment += row.payment;
+        years[yr].principal += row.principal;
+        years[yr].interest += row.interest;
+        years[yr].balance = row.balance;
+      }
+      return Object.values(years);
+    },
+    async loadLoanPayments(id) {
+      const data = await this.api(`/api/loans/${id}/payments`);
+      this.loanPayments = { ...this.loanPayments, [id]: data || [] };
+    },
+    async saveLoanPayment(loanId) {
+      const f = this.loanPaymentForm;
+      const amount = parseFloat(f.amount);
+      if (!amount || amount <= 0) { this.showToast('Enter a payment amount'); return; }
+      this.loanPaymentSaving = true;
+      try {
+        const principal = parseFloat(f.principal) || amount;
+        const interest = parseFloat(f.interest) || 0;
+        const result = await this.api(`/api/loans/${loanId}/payments`, {
+          method: 'POST',
+          body: JSON.stringify({
+            payment_date: f.payment_date,
+            amount, principal, interest,
+            notes: f.notes || null,
+          }),
+        });
+        // Update loan in list with new outstanding balance
+        const idx = this.loans.findIndex(l => l.id === loanId);
+        if (idx >= 0 && result.loan) this.loans[idx] = result.loan;
+        // Reload payments list
+        await this.loadLoanPayments(loanId);
+        this.loanPaymentFormId = null;
+        this.loanPaymentForm = { payment_date: new Date().toISOString().slice(0,10), amount: '', principal: '', interest: '', notes: '' };
+        this.showToast('Payment recorded');
+      } catch(e) {
+        this.showToast('Error: ' + (e.message || 'Could not save'), true);
+      } finally {
+        this.loanPaymentSaving = false;
+      }
+    },
+    async deleteLoanPayment(loanId, paymentId) {
+      if (!confirm('Remove this payment? The loan balance will be restored.')) return;
+      await this.api(`/api/loans/${loanId}/payments/${paymentId}`, { method: 'DELETE' });
+      await this.loadLoanPayments(loanId);
+      await this.loadLoans();
+    },
     async calcLoanExtra(id) {
       const extra = parseInt(this.loanExtraInput[id] || 0);
-      if (!extra || extra <= 0) { this.showToast('Enter an extra repayment amount', true); return; }
+      if (!extra || extra <= 0) { this.showToast('Enter an extra repayment amount'); return; }
       this.loanExtraLoading = { ...this.loanExtraLoading, [id]: true };
       try {
         const data = await this.api(`/api/loans/${id}/extra-repayment?extra_cents=${extra * 100}`);

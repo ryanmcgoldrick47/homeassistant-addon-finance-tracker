@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import Loan, get_session, User
+from database import Loan, LoanPayment, get_session, User
 from deps import get_current_user
 
 router = APIRouter(tags=["loans"])
@@ -123,6 +123,14 @@ class LoanUpdate(BaseModel):
     monthly_repayment_cents: Optional[int] = None
     offset_cents: Optional[int] = None
     is_active: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class LoanPaymentIn(BaseModel):
+    payment_date: str   # ISO date
+    amount: float       # total payment in dollars
+    principal: float = 0.0
+    interest: float = 0.0
     notes: Optional[str] = None
 
 
@@ -282,3 +290,94 @@ def suggest_repayment(
     """Calculate suggested minimum P&I repayment for given loan parameters."""
     repayment = _calc_repayment(principal_cents / 100, interest_rate, term_months)
     return {"suggested_monthly_repayment_cents": round(repayment * 100)}
+
+
+# ── Loan Payments ──────────────────────────────────────────────────────────────
+
+@router.get("/api/loans/{loan_id}/payments")
+def list_payments(
+    loan_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    loan = session.get(Loan, loan_id)
+    if not loan or loan.user_id != current_user.id:
+        raise HTTPException(404, "Loan not found")
+    payments = session.exec(
+        select(LoanPayment).where(
+            LoanPayment.loan_id == loan_id,
+            LoanPayment.user_id == current_user.id,
+        ).order_by(LoanPayment.payment_date.desc())
+    ).all()
+    return [
+        {
+            "id": p.id,
+            "payment_date": str(p.payment_date),
+            "amount": p.amount_cents / 100,
+            "principal": p.principal_cents / 100,
+            "interest": p.interest_cents / 100,
+            "notes": p.notes,
+        }
+        for p in payments
+    ]
+
+
+@router.post("/api/loans/{loan_id}/payments")
+def add_payment(
+    loan_id: int,
+    body: LoanPaymentIn,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    loan = session.get(Loan, loan_id)
+    if not loan or loan.user_id != current_user.id:
+        raise HTTPException(404, "Loan not found")
+
+    amount_cents = round(body.amount * 100)
+    principal_cents = round(body.principal * 100) if body.principal else amount_cents
+    interest_cents = round(body.interest * 100) if body.interest else 0
+
+    payment = LoanPayment(
+        loan_id=loan_id,
+        payment_date=date.fromisoformat(body.payment_date),
+        amount_cents=amount_cents,
+        principal_cents=principal_cents,
+        interest_cents=interest_cents,
+        notes=body.notes,
+        user_id=current_user.id,
+    )
+    session.add(payment)
+
+    # Reduce outstanding balance by principal portion
+    loan.outstanding_cents = max(0, loan.outstanding_cents - principal_cents)
+    session.add(loan)
+    session.commit()
+    session.refresh(loan)
+
+    # Return updated loan summary
+    schedule = _amortise(
+        loan.outstanding_cents, loan.interest_rate,
+        loan.term_months, loan.monthly_repayment_cents, loan.offset_cents,
+    )
+    return {"ok": True, "payment_id": payment.id, "new_outstanding": loan.outstanding_cents / 100,
+            "loan": _loan_summary(loan, schedule)}
+
+
+@router.delete("/api/loans/{loan_id}/payments/{payment_id}")
+def delete_payment(
+    loan_id: int,
+    payment_id: int,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    payment = session.get(LoanPayment, payment_id)
+    if not payment or payment.loan_id != loan_id or payment.user_id != current_user.id:
+        raise HTTPException(404, "Payment not found")
+    loan = session.get(Loan, loan_id)
+    if loan:
+        # Restore the principal to outstanding balance
+        loan.outstanding_cents += payment.principal_cents
+        session.add(loan)
+    session.delete(payment)
+    session.commit()
+    return {"ok": True}
