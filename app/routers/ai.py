@@ -112,6 +112,9 @@ async def categorise_transactions(
     body: CategoriseRequest,
     session: Session = Depends(get_session),
 ):
+    if get_setting(session, "ai_categorise_enabled") == "0":
+        raise HTTPException(403, "AI categorisation is disabled. Enable it in Settings → AI Features.")
+
     provider = get_setting(session, "ai_provider") or "gemini"
 
     if provider == "gemini":

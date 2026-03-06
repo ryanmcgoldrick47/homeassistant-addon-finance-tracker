@@ -775,6 +775,8 @@ async def send_newsletter(
     current_user: User = Depends(get_current_user),
 ):
     """Build and send the weekly newsletter email."""
+    if get_setting(session, "ai_newsletter_enabled") == "0":
+        raise HTTPException(403, "Newsletter AI is disabled. Enable it in Settings → AI Features.")
     gmail_address    = get_setting(session, "gmail_address", "")
     gmail_password   = get_setting(session, "gmail_app_password", "")
     newsletter_email = get_setting(session, "newsletter_email", "") or gmail_address

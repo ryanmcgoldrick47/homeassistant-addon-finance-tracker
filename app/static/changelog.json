@@ -1,6 +1,19 @@
 [
   {
     "date": "2026-03-06",
+    "version": "v47",
+    "title": "Calendar Heatmap + Loans Tracker + ATO Pre-Fill + AI Toggles",
+    "items": [
+      "ATO Pre-Fill: FY Summary card now shows estimated gross tax, LITO offset, Medicare levy, and refund/liability using ATO FY2025-26 brackets",
+      "Calendar Heatmap: new Calendar page with monthly spending heatmap — P90 colour scaling, click any day for transaction/bill detail popover",
+      "Future month projections: future calendar months show projected spend (~$X) based on last 3-month average",
+      "Mortgage & Loan Tracker: new Loans page with full CRUD, amortisation schedule, and extra repayment calculator",
+      "AI Feature Toggles: Settings → AI Features section to enable/disable OCR, Gmail, Newsletter, Categorisation, and Payslip AI features individually with AUD cost estimates",
+      "AI guard clauses: disabled AI features now return a 403 with a friendly message instead of silently consuming API quota"
+    ]
+  },
+  {
+    "date": "2026-03-06",
     "version": "v41",
     "title": "Gmail Import History + Cross-Source Dedup + Duplicate Detector",
     "items": [

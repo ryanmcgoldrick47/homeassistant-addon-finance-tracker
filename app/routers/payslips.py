@@ -95,6 +95,8 @@ Return ONLY the JSON object, no markdown, no explanation."""
 
 
 async def _call_ai_extraction(text: str, session: Session) -> dict:
+    if get_setting(session, "ai_payslip_enabled") == "0":
+        raise HTTPException(403, "Payslip AI extraction is disabled. Enable it in Settings → AI Features.")
     provider = get_setting(session, "ai_provider") or "gemini"
     prompt = _build_extraction_prompt(text)
 

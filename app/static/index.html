@@ -1263,6 +1263,125 @@
 
       <!-- ═══════════ IMPORT ═══════════ -->
       <div x-show="page === 'import'" x-cloak>
+
+        <!-- Receipt OCR Scanner — TOP of import page -->
+        <div class="card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div>
+              <div class="section-title" style="margin-bottom:2px;">Receipt / Tax Invoice Scanner</div>
+              <div style="font-size:12px;color:var(--muted);">Upload a receipt — AI extracts merchant, amount, date, and currency, then matches to an existing transaction.</div>
+            </div>
+          </div>
+
+          <!-- Step 1: Upload -->
+          <div x-show="!ocrResult">
+            <div style="display:flex;flex-direction:column;gap:10px;">
+              <input type="file" accept="image/*,application/pdf"
+                @change="ocrFile = $event.target.files[0]"
+                style="font-size:13px;" />
+              <div x-show="ocrFile" style="font-size:12px;color:var(--muted);" x-text="'Selected: ' + ocrFile?.name"></div>
+              <button @click="runOcr()" class="btn btn-primary btn-sm" :disabled="!ocrFile || ocrLoading">
+                <span x-show="!ocrLoading">🔍 Scan Receipt</span>
+                <span x-show="ocrLoading">Scanning… (this may take 10–20s)</span>
+              </button>
+              <div x-show="ocrError" class="alert alert-error" x-text="ocrError"></div>
+            </div>
+          </div>
+
+          <!-- Step 2: Review & confirm -->
+          <div x-show="ocrResult">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-size:13px;font-weight:600;">Extracted from receipt</div>
+              <button @click="ocrResult=null; ocrFile=null; ocrError=''" class="btn btn-ghost btn-sm">Scan another</button>
+            </div>
+
+            <!-- Extracted fields (editable) -->
+            <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
+              <div><label class="form-label">Merchant</label>
+                <input x-model="ocrResult.extracted.merchant" /></div>
+              <div><label class="form-label">Amount (AUD $)</label>
+                <input type="number" x-model="ocrResult.extracted.amount" step="0.01" min="0" /></div>
+              <div><label class="form-label">Date</label>
+                <input type="date" x-model="ocrResult.extracted.date" /></div>
+              <div><label class="form-label">Category</label>
+                <input x-model="ocrResult.extracted.category" /></div>
+            </div>
+
+            <!-- Foreign currency row -->
+            <div x-show="ocrResult.extracted.currency && ocrResult.extracted.currency !== 'AUD'"
+                 style="padding:8px 12px;background:rgba(245,158,11,.08);border:1px solid rgba(245,158,11,.25);border-radius:8px;margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;align-items:center;">
+              <div style="font-size:13px;font-weight:600;color:var(--amber,#f59e0b);">
+                Foreign currency: <span x-text="ocrResult.extracted.currency"></span>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex:1;min-width:160px;">
+                <label class="form-label" style="margin:0;white-space:nowrap;">AUD equiv. $</label>
+                <input type="number" x-model="ocrResult.extracted.amount_aud" step="0.01" min="0"
+                  style="flex:1;" placeholder="Enter AUD amount" />
+              </div>
+              <div style="font-size:11px;color:var(--muted);width:100%;">The Amount (AUD $) field above is used for the transaction. The original currency is stored in notes.</div>
+            </div>
+
+            <!-- Flags row -->
+            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;">
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" x-model="ocrResult.extracted.tax_deductible"
+                  style="width:15px;height:15px;accent-color:var(--accent);" />
+                Tax deductible
+              </label>
+              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                <input type="checkbox" x-model="ocrResult.extracted.is_reimbursable"
+                  style="width:15px;height:15px;accent-color:var(--accent);" />
+                Reimbursable (work / employer)
+              </label>
+            </div>
+
+            <!-- Best match transaction -->
+            <template x-if="ocrResult.match">
+              <div style="padding:10px 12px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:10px;margin-bottom:12px;">
+                <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;">BEST MATCH — <span x-text="Math.round(ocrResult.match.match_score * 100) + '% confidence'"></span></div>
+                <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                  <div>
+                    <div style="font-size:13px;font-weight:600;" x-text="ocrResult.match.description"></div>
+                    <div style="font-size:12px;color:var(--muted);" x-text="ocrResult.match.date + ' · ' + (ocrResult.match.category || 'Uncategorised')"></div>
+                    <div x-show="ocrResult.match.has_receipt" style="font-size:11px;color:var(--amber,#f59e0b);">⚠ Already has a receipt</div>
+                  </div>
+                  <div style="font-size:17px;font-weight:700;" x-text="'$' + fmt(ocrResult.match.amount)"></div>
+                </div>
+                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                  <button @click="attachOcrReceipt(ocrResult.match.id)" class="btn btn-primary btn-sm" :disabled="ocrAttaching">
+                    <span x-show="!ocrAttaching">Attach to this transaction</span>
+                    <span x-show="ocrAttaching">Saving…</span>
+                  </button>
+                  <button @click="ocrResult.match=null" class="btn btn-ghost btn-sm">Not a match</button>
+                </div>
+              </div>
+            </template>
+
+            <!-- No match — create new -->
+            <template x-if="!ocrResult.match">
+              <div style="padding:10px 12px;background:var(--surf2);border-radius:10px;margin-bottom:12px;">
+                <div style="font-size:12px;color:var(--muted);margin-bottom:8px;">No matching transaction found within ±3 days. Create a new transaction?</div>
+                <div style="margin-bottom:8px;">
+                  <label class="form-label">Account</label>
+                  <select x-model="ocrNewAccountId">
+                    <option value="__cash__">Cash</option>
+                    <template x-for="a in accounts" :key="a.id">
+                      <option :value="a.id" x-text="`${a.name} (${a.bank})`"></option>
+                    </template>
+                  </select>
+                </div>
+                <button @click="attachOcrReceipt(null, true)" class="btn btn-primary btn-sm" :disabled="ocrAttaching || !ocrNewAccountId">
+                  <span x-show="!ocrAttaching">Create transaction + attach</span>
+                  <span x-show="ocrAttaching">Saving…</span>
+                </button>
+              </div>
+            </template>
+
+            <div x-show="ocrAttachResult" class="alert alert-success" x-text="ocrAttachResult"></div>
+            <div x-show="ocrError" class="alert alert-error" x-text="ocrError"></div>
+          </div>
+        </div>
+
         <div class="grid grid-2 gap-4">
 
           <div class="card">
@@ -1675,6 +1794,7 @@
             <span x-show="enrichResult?.error" x-text="enrichResult?.error"></span>
           </div>
         </div>
+
       </div>
 
       <!-- ═══════════ CATEGORIES ═══════════ -->
@@ -1990,6 +2110,52 @@
                       <span style="font-weight:600;margin-left:6px;color:var(--green);" x-text="'$' + fmt(d.amount)"></span>
                     </div>
                   </template>
+                </div>
+              </div>
+            </template>
+
+            <!-- ATO Pre-Fill Tax Estimate -->
+            <template x-if="fySummary.estimated_taxable > 0">
+              <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border);">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+                  <div style="font-size:12px;color:var(--muted);font-weight:600;">ATO Pre-Fill Estimate</div>
+                  <div style="font-size:11px;color:var(--amber,#f59e0b);background:rgba(245,158,11,.12);padding:2px 7px;border-radius:99px;">Estimate only — verify with your tax agent</div>
+                </div>
+                <div class="grid grid-4 gap-3">
+                  <div style="text-align:center;">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Gross Tax</div>
+                    <div style="font-size:15px;font-weight:600;color:var(--red);" x-text="'$' + fmt(calcATOTax(fySummary.estimated_taxable).gross_tax)"></div>
+                  </div>
+                  <div style="text-align:center;">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">LITO Offset</div>
+                    <div style="font-size:15px;font-weight:600;color:var(--green);" x-text="'−$' + fmt(calcATOTax(fySummary.estimated_taxable).lito)"></div>
+                  </div>
+                  <div style="text-align:center;">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Medicare Levy</div>
+                    <div style="font-size:15px;font-weight:600;" x-text="'$' + fmt(calcATOTax(fySummary.estimated_taxable).medicare)"></div>
+                  </div>
+                  <div style="text-align:center;">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Total Tax Payable</div>
+                    <div style="font-size:15px;font-weight:700;color:var(--red);" x-text="'$' + fmt(calcATOTax(fySummary.estimated_taxable).total_tax)"></div>
+                  </div>
+                </div>
+                <div style="margin-top:12px;padding:10px 14px;border-radius:10px;"
+                  :style="(fySummary.tax_withheld - calcATOTax(fySummary.estimated_taxable).total_tax) >= 0
+                    ? 'background:rgba(52,211,153,.12);border:1px solid rgba(52,211,153,.3);'
+                    : 'background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.3);'">
+                  <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <div>
+                      <div style="font-size:12px;color:var(--muted);">Tax Withheld − Tax Payable</div>
+                      <div style="font-size:11px;color:var(--muted);margin-top:2px;" x-text="'$'+fmt(fySummary.tax_withheld)+' withheld − $'+fmt(calcATOTax(fySummary.estimated_taxable).total_tax)+' payable'"></div>
+                    </div>
+                    <div>
+                      <div style="font-size:11px;color:var(--muted);text-align:right;"
+                        x-text="(fySummary.tax_withheld - calcATOTax(fySummary.estimated_taxable).total_tax) >= 0 ? 'Estimated Refund' : 'Estimated Bill'"></div>
+                      <div style="font-size:22px;font-weight:700;"
+                        :style="(fySummary.tax_withheld - calcATOTax(fySummary.estimated_taxable).total_tax) >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                        x-text="((fySummary.tax_withheld - calcATOTax(fySummary.estimated_taxable).total_tax) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(fySummary.tax_withheld - calcATOTax(fySummary.estimated_taxable).total_tax))"></div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </template>
@@ -2704,6 +2870,125 @@
                 </template>
               </tbody>
             </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══════════ CALENDAR ═══════════ -->
+      <div x-show="page === 'calendar'" x-cloak>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <button @click="billCalYear--; loadBillCalendar()" class="btn btn-ghost btn-sm">‹</button>
+            <div style="font-weight:700;font-size:16px;" x-text="billCalYear"></div>
+            <button @click="billCalYear++; loadBillCalendar()" class="btn btn-ghost btn-sm">›</button>
+          </div>
+          <button @click="billCalYear=new Date().getFullYear(); loadBillCalendar()" class="btn btn-ghost btn-sm">Today's Year</button>
+        </div>
+
+        <!-- Monthly grid -->
+        <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:14px;">
+          <template x-for="mon in calendarMonths" :key="mon.key">
+            <div class="card" style="padding:12px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <div style="font-weight:600;font-size:14px;" x-text="mon.label"></div>
+                <div style="font-size:13px;font-weight:600;"
+                  :style="mon.isFuture ? 'color:var(--amber,#f59e0b)' : 'color:var(--accent)'"
+                  x-text="mon.total > 0 ? '$'+fmt(mon.total) : (mon.isFuture && calendarAvgMonthlySpend > 0 ? '~$'+fmt(calendarAvgMonthlySpend)+' proj' : '')">
+                </div>
+              </div>
+              <!-- Day grid (7 cols = Sun-Sat) -->
+              <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:4px;">
+                <template x-for="d in ['S','M','T','W','T','F','S']">
+                  <div style="text-align:center;font-size:9px;color:var(--muted);padding-bottom:2px;" x-text="d"></div>
+                </template>
+                <!-- Leading blanks -->
+                <template x-for="_ in Array(mon.startDay).fill(0)">
+                  <div></div>
+                </template>
+                <!-- Day cells -->
+                <template x-for="day in mon.days" :key="day.key">
+                  <div @click="openCalDayPopover(day.key)"
+                    :title="day.key + (day.spend > 0 ? ': $'+fmt(day.spend) : '') + (day.bills.length ? ' · '+day.bills.length+' bill(s)' : '')"
+                    style="aspect-ratio:1;border-radius:4px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:10px;position:relative;transition:opacity .15s;"
+                    :style="'background:' + calendarSpendColor(day.spend) + ';' + (day.isToday ? 'outline:2px solid var(--accent);' : '')"
+                    x-text="day.d">
+                  </div>
+                </template>
+              </div>
+              <!-- Bills due this month -->
+              <template x-if="mon.billCount > 0">
+                <div style="font-size:11px;color:var(--amber,#f59e0b);margin-top:4px;" x-text="mon.billCount + ' bill(s) due'"></div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <!-- Day Detail Popover -->
+        <div x-show="calDayPopover" x-cloak
+          style="position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:200;display:flex;align-items:center;justify-content:center;padding:16px;"
+          @click.self="calDayPopover=null">
+          <div class="card" style="width:100%;max-width:400px;max-height:80vh;overflow-y:auto;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-weight:700;font-size:15px;" x-text="calDayPopover"></div>
+              <button @click="calDayPopover=null" style="background:none;border:none;cursor:pointer;font-size:18px;color:var(--muted);">✕</button>
+            </div>
+            <div x-show="calDayDetailLoading" style="text-align:center;padding:20px;color:var(--muted);">Loading…</div>
+            <template x-if="calDayDetail && !calDayDetailLoading">
+              <div>
+                <!-- Bills due -->
+                <template x-if="calDayDetail.bills.length > 0">
+                  <div style="margin-bottom:10px;">
+                    <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;">BILLS DUE</div>
+                    <template x-for="b in calDayDetail.bills" :key="b.name">
+                      <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">
+                        <span style="font-size:13px;" x-text="b.name"></span>
+                        <span style="font-size:13px;font-weight:600;color:var(--amber,#f59e0b);" x-text="'$'+fmt(b.amount)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <!-- Income -->
+                <template x-if="calDayDetail.income.length > 0">
+                  <div style="margin-bottom:10px;">
+                    <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;">INCOME</div>
+                    <template x-for="t in calDayDetail.income" :key="t.id">
+                      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">
+                        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                          <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;" :style="'background:'+(t.category_colour||'#22c55e')"></div>
+                          <span style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="t.description"></span>
+                        </div>
+                        <span style="font-size:13px;font-weight:600;color:var(--green);white-space:nowrap;margin-left:8px;" x-text="'+$'+fmt(t.amount)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <!-- Expenses -->
+                <template x-if="calDayDetail.txns.length > 0">
+                  <div>
+                    <div style="font-size:11px;color:var(--muted);font-weight:600;margin-bottom:6px;">EXPENSES</div>
+                    <template x-for="t in calDayDetail.txns" :key="t.id">
+                      <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);">
+                        <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                          <div style="width:8px;height:8px;border-radius:50%;flex-shrink:0;" :style="'background:'+(t.category_colour||'#6366f1')"></div>
+                          <span style="font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" x-text="t.description"></span>
+                        </div>
+                        <span style="font-size:13px;font-weight:600;white-space:nowrap;margin-left:8px;" x-text="'$'+fmt(t.amount)"></span>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+                <template x-if="calDayDetail.txns.length === 0 && calDayDetail.income.length === 0 && calDayDetail.bills.length === 0">
+                  <div style="text-align:center;color:var(--muted);font-size:13px;padding:12px 0;">No activity on this day</div>
+                </template>
+                <!-- Total -->
+                <template x-if="calDayDetail.total_spend > 0">
+                  <div style="display:flex;justify-content:space-between;padding-top:10px;margin-top:6px;border-top:2px solid var(--border);">
+                    <span style="font-weight:600;font-size:13px;">Total Spend</span>
+                    <span style="font-weight:700;font-size:14px;" x-text="'$'+fmt(calDayDetail.total_spend)"></span>
+                  </div>
+                </template>
+              </div>
+            </template>
           </div>
         </div>
       </div>
@@ -4191,6 +4476,178 @@
         </div>
       </div>
 
+      <!-- ═══════════ LOANS ═══════════ -->
+      <div x-show="page === 'loans'" x-cloak>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px;">
+          <div class="section-title" style="margin:0;">Mortgage &amp; Loan Tracker</div>
+          <button @click="loanFormOpen=!loanFormOpen; loanEditId=null; resetLoanForm()" class="btn btn-primary btn-sm">+ Add Loan</button>
+        </div>
+
+        <!-- Add/Edit form -->
+        <div x-show="loanFormOpen" class="card" style="margin-bottom:16px;border-left:3px solid var(--accent);">
+          <div style="font-weight:600;font-size:14px;margin-bottom:12px;" x-text="loanEditId ? 'Edit Loan' : 'New Loan'"></div>
+          <div class="grid" style="grid-template-columns:1fr 1fr;gap:10px;">
+            <div><label class="form-label">Name</label>
+              <input x-model="loanForm.name" placeholder="e.g. Home Loan" /></div>
+            <div><label class="form-label">Type</label>
+              <select x-model="loanForm.loan_type">
+                <option value="mortgage">Mortgage</option>
+                <option value="personal">Personal</option>
+                <option value="car">Car</option>
+                <option value="other">Other</option>
+              </select></div>
+            <div><label class="form-label">Original Principal ($)</label>
+              <input type="number" x-model="loanForm.principal" placeholder="600000" min="0" /></div>
+            <div><label class="form-label">Current Balance ($)</label>
+              <input type="number" x-model="loanForm.outstanding" placeholder="540000" min="0" /></div>
+            <div><label class="form-label">Interest Rate (% p.a.)</label>
+              <input type="number" x-model="loanForm.interest_rate" placeholder="6.14" step="0.01" min="0" max="30" /></div>
+            <div><label class="form-label">Loan Term (months)</label>
+              <input type="number" x-model="loanForm.term_months" placeholder="360" min="1" /></div>
+            <div><label class="form-label">Monthly Repayment ($)</label>
+              <input type="number" x-model="loanForm.monthly_repayment" placeholder="3800" min="0" /></div>
+            <div><label class="form-label">Offset Balance ($)</label>
+              <input type="number" x-model="loanForm.offset" placeholder="20000" min="0" /></div>
+            <div><label class="form-label">Start Date</label>
+              <input type="date" x-model="loanForm.start_date" /></div>
+            <div><label class="form-label">Notes</label>
+              <input x-model="loanForm.notes" placeholder="Optional notes" /></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button @click="saveLoan()" class="btn btn-primary" :disabled="loanSaving">
+              <span x-show="!loanSaving" x-text="loanEditId ? 'Update' : 'Save'"></span>
+              <span x-show="loanSaving">Saving…</span>
+            </button>
+            <button @click="loanFormOpen=false; loanEditId=null" class="btn btn-ghost">Cancel</button>
+          </div>
+        </div>
+
+        <!-- Loan cards -->
+        <div x-show="loansLoading" style="text-align:center;padding:32px;color:var(--muted);">Loading…</div>
+        <div x-show="!loansLoading && loans.length === 0" style="text-align:center;padding:32px;color:var(--muted);">
+          No loans yet. Add your mortgage or other loans to track them.
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <template x-for="loan in loans" :key="loan.id">
+            <div class="card">
+              <!-- Header -->
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+                <div>
+                  <div style="display:flex;align-items:center;gap:8px;">
+                    <span style="font-size:18px;" x-text="loan.loan_type === 'mortgage' ? '🏠' : loan.loan_type === 'car' ? '🚗' : loan.loan_type === 'personal' ? '💳' : '📝'"></span>
+                    <span style="font-weight:700;font-size:15px;" x-text="loan.name"></span>
+                    <span style="font-size:11px;padding:2px 7px;border-radius:99px;background:var(--surf2);color:var(--muted);" x-text="loan.loan_type"></span>
+                  </div>
+                  <div style="font-size:12px;color:var(--muted);margin-top:3px;" x-text="loan.interest_rate + '% p.a. · ' + loan.term_months + ' month term'"></div>
+                </div>
+                <div style="display:flex;gap:6px;">
+                  <button @click="openEditLoan(loan)" class="btn btn-ghost btn-sm">Edit</button>
+                  <button @click="deleteLoan(loan.id)" class="btn btn-ghost btn-sm" style="color:var(--red);">Delete</button>
+                </div>
+              </div>
+              <!-- Stats -->
+              <div class="grid grid-4 gap-3" style="margin-bottom:12px;">
+                <div style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);">Outstanding</div>
+                  <div style="font-size:17px;font-weight:700;" x-text="'$'+fmt(loan.outstanding)"></div>
+                </div>
+                <div style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);">Monthly Repayment</div>
+                  <div style="font-size:15px;font-weight:600;" x-text="'$'+fmt(loan.monthly_repayment)"></div>
+                  <template x-if="loan.offset > 0">
+                    <div style="font-size:11px;color:var(--green);" x-text="'offset: $'+fmt(loan.offset)"></div>
+                  </template>
+                </div>
+                <div style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);">Payoff Date</div>
+                  <div style="font-size:14px;font-weight:600;" x-text="loan.payoff_date || '—'"></div>
+                  <div style="font-size:11px;color:var(--muted);" x-text="loan.months_remaining ? loan.months_remaining + ' months' : ''"></div>
+                </div>
+                <div style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);">Total Interest Remaining</div>
+                  <div style="font-size:14px;font-weight:600;color:var(--red);" x-text="'$'+fmt(loan.total_interest_remaining)"></div>
+                </div>
+              </div>
+              <!-- Progress bar -->
+              <div style="margin-bottom:12px;">
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px;">
+                  <span>Paid off</span>
+                  <span x-text="Math.round((1 - loan.outstanding / loan.principal) * 100) + '%'"></span>
+                </div>
+                <div style="height:6px;background:var(--surf2);border-radius:3px;">
+                  <div style="height:100%;border-radius:3px;background:var(--green);transition:width .3s;"
+                    :style="'width:'+Math.max(0,Math.round((1 - loan.outstanding / loan.principal)*100))+'%'"></div>
+                </div>
+              </div>
+              <!-- Extra repayment calculator -->
+              <div style="margin-bottom:10px;">
+                <div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px;">Extra Repayment Calculator</div>
+                <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                  <input type="number" placeholder="Extra $/month" style="width:160px;"
+                    x-model="loanExtraInput[loan.id]" @keyup.enter="calcLoanExtra(loan.id)" min="0" />
+                  <button @click="calcLoanExtra(loan.id)" class="btn btn-ghost btn-sm"
+                    :disabled="loanExtraLoading[loan.id]">Calculate</button>
+                </div>
+                <template x-if="loanExtraResult[loan.id]">
+                  <div style="margin-top:8px;padding:8px 10px;background:rgba(52,211,153,.1);border-radius:8px;border:1px solid rgba(52,211,153,.25);">
+                    <div class="grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;">
+                      <div style="text-align:center;">
+                        <div style="font-size:11px;color:var(--muted);">New Payoff Date</div>
+                        <div style="font-size:13px;font-weight:600;" x-text="loanExtraResult[loan.id].new_payoff_date || '—'"></div>
+                      </div>
+                      <div style="text-align:center;">
+                        <div style="font-size:11px;color:var(--muted);">Months Saved</div>
+                        <div style="font-size:13px;font-weight:700;color:var(--green);" x-text="loanExtraResult[loan.id].months_saved + ' mo'"></div>
+                      </div>
+                      <div style="text-align:center;">
+                        <div style="font-size:11px;color:var(--muted);">Interest Saved</div>
+                        <div style="font-size:13px;font-weight:700;color:var(--green);" x-text="'$'+fmt(loanExtraResult[loan.id].interest_saved)"></div>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <!-- Amortisation toggle -->
+              <button @click="toggleLoanAmort(loan.id)" class="btn btn-ghost btn-sm" style="font-size:12px;">
+                <span x-text="loanAmortId === loan.id ? '▲ Hide Schedule' : '▼ Amortisation Schedule'"></span>
+              </button>
+              <div x-show="loanAmortId === loan.id" style="margin-top:12px;overflow-x:auto;">
+                <div x-show="loanAmortLoading" style="text-align:center;padding:12px;color:var(--muted);">Loading…</div>
+                <template x-if="loanAmort && loanAmortId === loan.id && !loanAmortLoading">
+                  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                    <thead>
+                      <tr style="color:var(--muted);">
+                        <th style="text-align:left;padding:4px 8px;">Month</th>
+                        <th style="text-align:right;padding:4px 8px;">Payment</th>
+                        <th style="text-align:right;padding:4px 8px;">Principal</th>
+                        <th style="text-align:right;padding:4px 8px;">Interest</th>
+                        <th style="text-align:right;padding:4px 8px;">Balance</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <template x-for="row in loanAmort.slice(0, loanAmortShowAll ? 9999 : 24)" :key="row.month">
+                        <tr style="border-top:1px solid var(--border);">
+                          <td style="padding:4px 8px;" x-text="row.month"></td>
+                          <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.payment)"></td>
+                          <td style="padding:4px 8px;text-align:right;color:var(--green);" x-text="'$'+fmt(row.principal)"></td>
+                          <td style="padding:4px 8px;text-align:right;color:var(--red);" x-text="'$'+fmt(row.interest)"></td>
+                          <td style="padding:4px 8px;text-align:right;" x-text="'$'+fmt(row.balance)"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                  <template x-if="loanAmort.length > 24">
+                    <button @click="loanAmortShowAll=!loanAmortShowAll" class="btn btn-ghost btn-sm" style="margin-top:8px;font-size:12px;">
+                      <span x-text="loanAmortShowAll ? 'Show Less' : 'Show All '+loanAmort.length+' Months'"></span>
+                    </button>
+                  </template>
+                </template>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
       <!-- ═══════════ REPORTS ═══════════ -->
       <div x-show="page === 'reports'" x-cloak>
         <div class="page-header"><h2>Reports</h2></div>
@@ -4602,6 +5059,45 @@
               </div>
             </div>
           </div>
+          <!-- AI Feature Toggles -->
+          <div class="card">
+            <div class="section-title">AI Features</div>
+            <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Enable or disable individual AI features. Disabling saves API cost without removing the feature from the UI.</p>
+            <div style="display:flex;flex-direction:column;gap:12px;">
+              <template x-for="feat in [
+                {key:'ai_ocr_enabled', label:'Receipt OCR Scanner', desc:'Scans receipt images with AI to extract amount, merchant, and date.', calls_key:'ai_ocr_calls_est'},
+                {key:'ai_gmail_enabled', label:'Gmail Smart Import', desc:'Uses AI to parse receipt and payslip emails from Gmail.', calls_key:'ai_gmail_calls_est'},
+                {key:'ai_newsletter_enabled', label:'Weekly Newsletter', desc:'AI-generated spending insights email sent to your inbox.', calls_key:'ai_newsletter_calls_est'},
+                {key:'ai_categorise_enabled', label:'AI Categorisation', desc:'Auto-categorises transactions using your AI provider.', calls_key:'ai_categorise_calls_est'},
+                {key:'ai_payslip_enabled', label:'Payslip AI Extraction', desc:'Extracts gross/tax/super from uploaded payslip PDFs.', calls_key:'ai_payslip_calls_est'},
+              ]" :key="feat.key">
+                <div style="padding:10px 12px;background:var(--surf2);border-radius:10px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
+                    <div>
+                      <div style="font-weight:600;font-size:13px;" x-text="feat.label"></div>
+                      <div style="font-size:12px;color:var(--muted);" x-text="feat.desc"></div>
+                    </div>
+                    <label style="position:relative;width:44px;height:24px;flex-shrink:0;cursor:pointer;">
+                      <input type="checkbox" :checked="(settings[feat.key] || '1') === '1'"
+                        @change="settings[feat.key] = $event.target.checked ? '1' : '0'; saveSettings()"
+                        style="opacity:0;width:0;height:0;position:absolute;" />
+                      <div :style="`position:absolute;inset:0;border-radius:24px;transition:.2s;background:${(settings[feat.key]||'1')==='1'?'var(--accent)':'var(--surf2)'};border:1px solid var(--border);`"></div>
+                      <div :style="`position:absolute;top:3px;left:${(settings[feat.key]||'1')==='1'?'22':'3'}px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3);`"></div>
+                    </label>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                    <input type="number" :x-model="`settings.${feat.calls_key}`" style="width:70px;font-size:12px;padding:3px 6px;"
+                      :value="settings[feat.calls_key] || '10'"
+                      @change="settings[feat.calls_key] = $event.target.value; saveSettings()"
+                      placeholder="calls/mo" min="0" />
+                    <span style="font-size:11px;color:var(--muted);">calls/month</span>
+                    <span style="font-size:11px;color:var(--accent);" x-text="estimateAICost(feat.key.replace('ai_','').replace('_enabled',''), settings.ai_provider || 'gemini', parseInt(settings[feat.calls_key] || 10))"></span>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
           <div class="card">
             <div class="section-title">Demo Mode</div>
             <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">
@@ -5705,6 +6201,12 @@
     </button>
     <button class="more-item" @click="page='goals'; moreOpen=false">
       <span>🎯</span><span>Goals</span>
+    </button>
+    <button class="more-item" @click="page='calendar'; moreOpen=false; loadBillCalendar()">
+      <span>🗓️</span><span>Calendar</span>
+    </button>
+    <button class="more-item" @click="page='loans'; moreOpen=false; loadLoans()">
+      <span>🏠</span><span>Loans</span>
     </button>
     <button class="more-item" @click="page='investments'; moreOpen=false">
       <span>🏦</span><span>Investments</span>
@@ -7063,6 +7565,8 @@ function app() {
       { id: 'budgets', label: 'Budgets', icon: '📈' },
       { id: 'tax', label: 'Tax', icon: '🧾' },
       { id: 'bills', label: 'Bills', icon: '📅' },
+      { id: 'calendar', label: 'Calendar', icon: '🗓️' },
+      { id: 'loans', label: 'Loans', icon: '🏠' },
       { id: 'flags', label: 'Review Queue', icon: '🚩' },
       { id: 'insights', label: 'Insights', icon: '✨' },
       { id: 'payslips', label: 'Payslips', icon: '💼' },
@@ -7078,6 +7582,38 @@ function app() {
       { id: 'pet', label: 'Finance Pet', icon: '🐾' },
       { id: 'setup', label: 'Setup Guide', icon: '🚀' },
     ],
+
+    // Receipt OCR
+    ocrFile: null,
+    ocrLoading: false,
+    ocrResult: null,
+    ocrError: '',
+    ocrAttaching: false,
+    ocrAttachResult: '',
+    ocrNewAccountId: null,
+
+    // Calendar
+    billCalYear: new Date().getFullYear(),
+    billCalendar: null,
+    billCalLoading: false,
+    calDayPopover: null,
+    calDayDetail: null,
+    calDayDetailLoading: false,
+
+    // Loans
+    loans: [],
+    loansLoading: false,
+    loanFormOpen: false,
+    loanEditId: null,
+    loanSaving: false,
+    loanForm: { name: '', loan_type: 'mortgage', principal: 0, outstanding: 0, interest_rate: 6.14, start_date: new Date().toISOString().slice(0,10), term_months: 360, monthly_repayment: 0, offset: 0, notes: '' },
+    loanAmortId: null,
+    loanAmort: null,
+    loanAmortLoading: false,
+    loanAmortShowAll: false,
+    loanExtraInput: {},
+    loanExtraResult: {},
+    loanExtraLoading: {},
 
     // Data
     dashMonth: new Date().getMonth() + 1,
@@ -8542,6 +9078,8 @@ function app() {
         if (p === 'transactions') this.loadTransactions();
         if (p === 'budgets') { this.loadBudgets(); this.renderBudgetChart(); }
         if (p === 'bills') { this.loadBills(); this.loadUpcomingBills(); this.loadRecurring(); this.loadPriceChanges(); }
+        if (p === 'calendar') this.loadBillCalendar();
+        if (p === 'loans') this.loadLoans();
         if (p === 'flags') this.loadFlaggedTxns();
         if (p === 'insights') { this.loadInsights(); this.loadBenchmarks(); }
         if (p === 'payslips') this.loadPayslips();
@@ -8747,11 +9285,315 @@ function app() {
       } catch(e) { this.enrichResult = { error: 'Enrichment failed' }; }
       this.enriching = false;
     },
+
+    // ── Receipt OCR ───────────────────────────────────────────────────────────
+    async _fileToBase64(file) {
+      const dataUrl = await new Promise((resolve, reject) => {
+        const to = setTimeout(() => reject(new Error('File read timed out')), 20000);
+        const reader = new FileReader();
+        reader.onload = e => { clearTimeout(to); resolve(e.target.result); };
+        reader.onerror = () => { clearTimeout(to); reject(new Error('File read failed')); };
+        reader.readAsDataURL(file);
+      });
+      // Try canvas compression (works in WKWebView using data: URLs)
+      try {
+        const img = await new Promise((res, rej) => {
+          const to = setTimeout(() => rej(new Error('img timeout')), 8000);
+          const i = new Image();
+          i.onload = () => { clearTimeout(to); res(i); };
+          i.onerror = () => { clearTimeout(to); rej(new Error('img load failed')); };
+          i.src = dataUrl;
+        });
+        const maxPx = 1920;
+        let w = img.naturalWidth || img.width || 1;
+        let h = img.naturalHeight || img.height || 1;
+        if (w > maxPx || h > maxPx) {
+          const s = maxPx / Math.max(w, h);
+          w = Math.round(w * s); h = Math.round(h * s);
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        return canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+      } catch (_) {
+        // Fallback: strip data: prefix and return raw base64
+        const comma = dataUrl.indexOf(',');
+        return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+      }
+    },
+    async runOcr() {
+      if (!this.ocrFile) return;
+      this.ocrLoading = true;
+      this.ocrError = '';
+      this.ocrResult = null;
+      try {
+        const b64 = await this._fileToBase64(this.ocrFile);
+        const data = await this.api('/api/receipts/ocr', {
+          method: 'POST',
+          body: JSON.stringify({
+            image: b64,
+            content_type: this.ocrFile.type || 'image/jpeg',
+            filename: this.ocrFile.name || 'receipt.jpg',
+          }),
+        });
+        if (!data.ok) throw new Error(data.detail || 'OCR failed');
+        this.ocrResult = data;
+        // Ensure editable flag fields exist
+        if (this.ocrResult.extracted.tax_deductible === undefined) this.ocrResult.extracted.tax_deductible = false;
+        if (this.ocrResult.extracted.is_reimbursable === undefined) this.ocrResult.extracted.is_reimbursable = false;
+        if (!this.ocrResult.extracted.currency) this.ocrResult.extracted.currency = 'AUD';
+        // Pre-select first account (Cash as fallback)
+        if (!this.ocrNewAccountId) {
+          this.ocrNewAccountId = this.accounts.length > 0 ? this.accounts[0].id : '__cash__';
+        }
+      } catch(e) {
+        this.ocrError = e.message || 'OCR scan failed';
+      } finally {
+        this.ocrLoading = false;
+      }
+    },
+    async attachOcrReceipt(txnId, createNew = false) {
+      if (!this.ocrResult) return;
+      this.ocrAttaching = true;
+      this.ocrError = '';
+      this.ocrAttachResult = '';
+      try {
+        // Handle Cash pseudo-account — find or create
+        let accountId = createNew ? this.ocrNewAccountId : null;
+        if (createNew && accountId === '__cash__') {
+          let cashAcc = this.accounts.find(a => a.name === 'Cash');
+          if (!cashAcc) {
+            cashAcc = await this.api('/api/import/accounts?name=Cash&bank=Cash&account_number=', { method: 'POST' });
+            await this.loadAccounts();
+          }
+          accountId = cashAcc.id;
+        }
+        const ext = this.ocrResult.extracted;
+        const isForeign = ext.currency && ext.currency !== 'AUD';
+        const data = await this.api('/api/receipts/ocr/attach', {
+          method: 'POST',
+          body: JSON.stringify({
+            image: this.ocrResult._temp_content,
+            content_type: this.ocrResult._temp_mime,
+            filename: this.ocrResult._temp_filename,
+            txn_id: txnId || null,
+            merchant: ext.merchant,
+            amount: parseFloat(ext.amount) || 0,
+            receipt_date: ext.date,
+            category_name: ext.category,
+            create_if_no_match: createNew,
+            account_id: accountId,
+            currency: ext.currency || 'AUD',
+            amount_aud: isForeign ? (parseFloat(ext.amount_aud) || null) : null,
+            tax_deductible: ext.tax_deductible || false,
+            is_reimbursable: ext.is_reimbursable || false,
+          }),
+        });
+        if (!data.ok) throw new Error(data.detail || 'Attach failed');
+        this.ocrAttachResult = data.created
+          ? `New transaction created and receipt attached (ID ${data.txn_id})`
+          : `Receipt attached to transaction #${data.txn_id}`;
+        this.ocrResult = null;
+        this.ocrFile = null;
+        this.loadTransactions();
+      } catch(e) {
+        this.ocrError = e.message || 'Could not attach receipt';
+      } finally {
+        this.ocrAttaching = false;
+      }
+    },
     async loadBills() {
       this.bills = await this.api('/api/bills');
       this.upcomingBills = await this.api('/api/bills/upcoming?days=30');
     },
     async loadUpcomingBills() { this.upcomingBills = await this.api('/api/bills/upcoming?days=30'); },
+
+    // ── Calendar ──────────────────────────────────────────────────────────────
+    async loadBillCalendar() {
+      this.billCalLoading = true;
+      try {
+        this.billCalendar = await this.api(`/api/bills/calendar?year=${this.billCalYear}`);
+      } finally {
+        this.billCalLoading = false;
+      }
+    },
+    get calendarMonths() {
+      if (!this.billCalendar) return [];
+      const today = new Date();
+      const months = [];
+      for (let m = 1; m <= 12; m++) {
+        const key = `${this.billCalYear}-${String(m).padStart(2,'0')}`;
+        const firstDay = new Date(this.billCalYear, m - 1, 1);
+        const daysInMonth = new Date(this.billCalYear, m, 0).getDate();
+        const startDay = firstDay.getDay(); // 0=Sun
+        const isFuture = this.billCalYear > today.getFullYear() ||
+          (this.billCalYear === today.getFullYear() && m > today.getMonth() + 1);
+        const days = [];
+        for (let d = 1; d <= daysInMonth; d++) {
+          const dayKey = `${key}-${String(d).padStart(2,'0')}`;
+          const isToday = today.getFullYear() === this.billCalYear && today.getMonth() + 1 === m && today.getDate() === d;
+          days.push({
+            d, key: dayKey, isToday,
+            spend: this.billCalendar.spend_by_day?.[dayKey] || 0,
+            bills: this.billCalendar.bills_by_day?.[dayKey] || [],
+          });
+        }
+        const total = this.billCalendar.monthly_spend?.[key] || 0;
+        const billCount = days.reduce((acc, d) => acc + d.bills.length, 0);
+        months.push({ key, label: firstDay.toLocaleString('en-AU', { month: 'short', year: 'numeric' }), startDay, days, total, isFuture, billCount });
+      }
+      return months;
+    },
+    get calendarSpendP90() {
+      const vals = Object.values(this.billCalendar?.spend_by_day || {}).filter(v => v > 0).sort((a, b) => a - b);
+      if (!vals.length) return 100;
+      return vals[Math.min(Math.floor(vals.length * 0.9), vals.length - 1)];
+    },
+    get calendarAvgMonthlySpend() {
+      const now = new Date();
+      const curPrefix = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+      const vals = Object.entries(this.billCalendar?.monthly_spend || {})
+        .filter(([k]) => k < curPrefix)
+        .sort(([a],[b]) => b.localeCompare(a))
+        .slice(0, 3)
+        .map(([,v]) => v);
+      return vals.length ? Math.round(vals.reduce((a,b) => a+b, 0) / vals.length) : 0;
+    },
+    calendarSpendColor(amount) {
+      if (!amount || amount <= 0) return 'var(--surf2)';
+      const scale = this.calendarSpendP90 || 100;
+      const ratio = Math.min(amount / scale, 1);
+      const alpha = 0.1 + ratio * 0.85;
+      return `rgba(99,102,241,${alpha.toFixed(2)})`;
+    },
+    async openCalDayPopover(dateKey) {
+      this.calDayPopover = dateKey;
+      this.calDayDetailLoading = true;
+      this.calDayDetail = null;
+      try {
+        this.calDayDetail = await this.api(`/api/bills/calendar/day?date_str=${dateKey}`);
+      } catch(e) {
+        this.calDayDetail = { txns: [], income: [], bills: [], total_spend: 0 };
+      } finally {
+        this.calDayDetailLoading = false;
+      }
+    },
+
+    // ── ATO Tax Calculator (FY2025–26 brackets) ───────────────────────────────
+    calcATOTax(income) {
+      if (!income || income <= 0) return { gross_tax: 0, lito: 0, medicare: 0, total_tax: 0 };
+      let tax = 0;
+      if (income <= 18200) tax = 0;
+      else if (income <= 45000) tax = (income - 18200) * 0.19;
+      else if (income <= 135000) tax = 5092 + (income - 45000) * 0.325;
+      else if (income <= 190000) tax = 34342 + (income - 135000) * 0.37;
+      else tax = 54942 + (income - 190000) * 0.45;
+      let lito = 0;
+      if (income <= 37500) lito = 700;
+      else if (income <= 45000) lito = 700 - (income - 37500) * 0.05;
+      else if (income <= 66667) lito = 325 - (income - 45000) * 0.015;
+      lito = Math.max(0, lito);
+      const medicare = income >= 29033 ? income * 0.02 : income > 23226 ? (income - 23226) * 0.10 : 0;
+      const total_tax = Math.max(0, tax - lito + medicare);
+      return { gross_tax: Math.round(tax), lito: Math.round(lito), medicare: Math.round(medicare), total_tax: Math.round(total_tax) };
+    },
+
+    // ── AI Cost Estimator ─────────────────────────────────────────────────────
+    estimateAICost(feature, provider, calls) {
+      const tokens = { ocr: 900, gmail: 700, newsletter: 3500, categorise: 250, payslip: 1800 };
+      const pricePerM = provider === 'anthropic' ? 3.72 : 0.47;
+      const t = tokens[feature] || 500;
+      const totalTokens = t * (calls || 0);
+      const cost = (totalTokens / 1_000_000) * pricePerM;
+      const aud = cost * 1.55;
+      const formatted = aud < 0.01 ? '<$0.01' : '$' + aud.toFixed(2);
+      return `~${totalTokens.toLocaleString()} tokens/mo · est. ${formatted} AUD`;
+    },
+
+    // ── Loans ─────────────────────────────────────────────────────────────────
+    async loadLoans() {
+      this.loansLoading = true;
+      try {
+        this.loans = await this.api('/api/loans') || [];
+      } finally {
+        this.loansLoading = false;
+      }
+    },
+    resetLoanForm() {
+      this.loanForm = { name: '', loan_type: 'mortgage', principal: 0, outstanding: 0, interest_rate: 6.14, start_date: new Date().toISOString().slice(0,10), term_months: 360, monthly_repayment: 0, offset: 0, notes: '' };
+    },
+    openEditLoan(loan) {
+      this.loanEditId = loan.id;
+      this.loanForm = {
+        name: loan.name, loan_type: loan.loan_type,
+        principal: loan.principal, outstanding: loan.outstanding,
+        interest_rate: loan.interest_rate, start_date: loan.start_date,
+        term_months: loan.term_months, monthly_repayment: loan.monthly_repayment,
+        offset: loan.offset || 0, notes: loan.notes || '',
+      };
+      this.loanFormOpen = true;
+    },
+    async saveLoan() {
+      const f = this.loanForm;
+      if (!f.name) { this.showToast('Name is required', true); return; }
+      this.loanSaving = true;
+      try {
+        const body = {
+          name: f.name, loan_type: f.loan_type,
+          principal_cents: Math.round(parseFloat(f.principal || 0) * 100),
+          outstanding_cents: Math.round(parseFloat(f.outstanding || 0) * 100),
+          interest_rate: parseFloat(f.interest_rate || 0),
+          start_date: f.start_date,
+          term_months: parseInt(f.term_months || 360),
+          monthly_repayment_cents: Math.round(parseFloat(f.monthly_repayment || 0) * 100),
+          offset_cents: Math.round(parseFloat(f.offset || 0) * 100),
+          notes: f.notes || null,
+        };
+        if (this.loanEditId) {
+          await this.api(`/api/loans/${this.loanEditId}`, { method: 'PATCH', body: JSON.stringify(body) });
+        } else {
+          await this.api('/api/loans', { method: 'POST', body: JSON.stringify(body) });
+        }
+        this.loanFormOpen = false; this.loanEditId = null;
+        this.resetLoanForm();
+        await this.loadLoans();
+        this.showToast('Loan saved');
+      } catch(e) {
+        this.showToast('Error: ' + (e.message || 'Could not save'), true);
+      } finally {
+        this.loanSaving = false;
+      }
+    },
+    async deleteLoan(id) {
+      if (!confirm('Delete this loan?')) return;
+      await this.api(`/api/loans/${id}`, { method: 'DELETE' });
+      await this.loadLoans();
+      this.showToast('Loan deleted');
+    },
+    async toggleLoanAmort(id) {
+      if (this.loanAmortId === id) { this.loanAmortId = null; this.loanAmort = null; return; }
+      this.loanAmortId = id;
+      this.loanAmort = null;
+      this.loanAmortLoading = true;
+      this.loanAmortShowAll = false;
+      try {
+        const data = await this.api(`/api/loans/${id}/amortisation`);
+        this.loanAmort = data.schedule || [];
+      } finally {
+        this.loanAmortLoading = false;
+      }
+    },
+    async calcLoanExtra(id) {
+      const extra = parseInt(this.loanExtraInput[id] || 0);
+      if (!extra || extra <= 0) { this.showToast('Enter an extra repayment amount', true); return; }
+      this.loanExtraLoading = { ...this.loanExtraLoading, [id]: true };
+      try {
+        const data = await this.api(`/api/loans/${id}/extra-repayment?extra_cents=${extra * 100}`);
+        this.loanExtraResult = { ...this.loanExtraResult, [id]: data };
+      } finally {
+        this.loanExtraLoading = { ...this.loanExtraLoading, [id]: false };
+      }
+    },
     async loadAtoPrefill() {
       this.atoPrefill = await this.api(`/api/tax/ato-prefill?fy=${this.taxFY}`);
     },

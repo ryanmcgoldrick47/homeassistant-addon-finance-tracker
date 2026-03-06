@@ -550,6 +550,9 @@ async def _run_gmail_scan(session: Session, user_id: int, override_since: str | 
     override_since: ISO date string (YYYY-MM-DD) to scan from a specific date regardless of last_scan.
     Returns a summary dict. Called by both the HTTP endpoint and the background scheduler.
     """
+    if get_setting(session, "ai_gmail_enabled") == "0":
+        return {"ok": False, "reason": "Gmail AI import is disabled. Enable it in Settings → AI Features."}
+
     email_addr = get_setting(session, "gmail_address") or ""
     app_password = get_setting(session, "gmail_app_password") or ""
 

@@ -580,6 +580,61 @@ def detect_recurring(
     }
 
 
+@router.get("/calendar")
+def bills_calendar(
+    year: Optional[int] = None,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Return monthly spending calendar data: spend per day + monthly totals."""
+    from datetime import datetime as _dt
+    today = date.today()
+    yr = year or today.year
+
+    # Transactions for the calendar year (expenses only)
+    txns = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.is_credit == False,
+            Transaction.date >= date(yr, 1, 1),
+            Transaction.date <= date(yr, 12, 31),
+        )
+    ).all()
+
+    # Aggregate spend by day and by month
+    spend_by_day: dict[str, float] = {}
+    monthly_spend: dict[str, float] = {}
+    for t in txns:
+        day_key = str(t.date)
+        month_key = str(t.date)[:7]
+        spend_by_day[day_key] = spend_by_day.get(day_key, 0) + t.amount
+        monthly_spend[month_key] = monthly_spend.get(month_key, 0) + t.amount
+
+    # Upcoming bills for the year
+    bills_raw = session.exec(
+        select(Bill).where(Bill.user_id == current_user.id, Bill.is_active == True)
+    ).all()
+
+    bills_by_day: dict[str, list] = {}
+    for b in bills_raw:
+        if b.next_due:
+            key = str(b.next_due)[:10]
+            if str(b.next_due)[:4] == str(yr):
+                if key not in bills_by_day:
+                    bills_by_day[key] = []
+                bills_by_day[key].append({"name": b.name, "amount": round(b.amount_cents / 100, 2)})
+
+    max_spend = max(spend_by_day.values()) if spend_by_day else 0
+
+    return {
+        "year": yr,
+        "spend_by_day": {k: round(v, 2) for k, v in spend_by_day.items()},
+        "monthly_spend": {k: round(v, 2) for k, v in monthly_spend.items()},
+        "bills_by_day": bills_by_day,
+        "max_spend": round(max_spend, 2),
+    }
+
+
 @router.get("/recurring")
 def list_recurring(
     session: Session = Depends(get_session),
@@ -626,4 +681,67 @@ def _pattern_dict(p: RecurringPattern) -> dict:
         "confidence": p.confidence,
         "status": p.status,
         "bill_id": p.bill_id,
+    }
+
+
+@router.get("/calendar/day")
+def calendar_day_detail(
+    date_str: str,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Return transactions and bills due on a specific date."""
+    try:
+        day = date.fromisoformat(date_str)
+    except Exception:
+        raise HTTPException(400, "Invalid date format — use YYYY-MM-DD")
+
+    # Transactions on that date
+    txns_raw = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.date == day,
+        ).order_by(Transaction.amount.desc())
+    ).all()
+
+    txn_list = []
+    income_list = []
+    total_spend = 0.0
+    total_income = 0.0
+    for t in txns_raw:
+        cat = session.get(Category, t.category_id) if t.category_id else None
+        entry = {
+            "id": t.id,
+            "description": t.description,
+            "amount": t.amount,
+            "category": cat.name if cat else None,
+            "category_colour": cat.colour if cat else "#6366f1",
+        }
+        if t.is_credit:
+            income_list.append(entry)
+            total_income += t.amount
+        else:
+            txn_list.append(entry)
+            total_spend += t.amount
+
+    # Bills due on that date
+    bills_raw = session.exec(
+        select(Bill).where(
+            Bill.user_id == current_user.id,
+            Bill.is_active == True,
+        )
+    ).all()
+
+    bills_due = []
+    for b in bills_raw:
+        if b.next_due and date.fromisoformat(str(b.next_due)) == day:
+            bills_due.append({"name": b.name, "amount": round(b.amount_cents / 100, 2)})
+
+    return {
+        "date": date_str,
+        "txns": txn_list,
+        "income": income_list,
+        "bills": bills_due,
+        "total_spend": round(total_spend, 2),
+        "total_income": round(total_income, 2),
     }

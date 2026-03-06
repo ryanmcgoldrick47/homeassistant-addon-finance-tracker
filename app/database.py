@@ -371,6 +371,22 @@ class ChatHistory(SQLModel, table=True):
     created_at:      str = Field(default_factory=lambda: __import__("datetime").datetime.now().isoformat(timespec="seconds"))
 
 
+class Loan(SQLModel, table=True):
+    id:                     Optional[int] = Field(default=None, primary_key=True)
+    name:                   str
+    loan_type:              str = "mortgage"   # mortgage | personal | car | other
+    principal_cents:        int                # original principal (cents)
+    outstanding_cents:      int                # current balance (cents)
+    interest_rate:          float              # annual % e.g. 6.14
+    start_date:             date
+    term_months:            int
+    monthly_repayment_cents: int
+    offset_cents:           int = 0            # offset account balance (cents)
+    is_active:              bool = True
+    notes:                  Optional[str] = None
+    user_id:                int = 1
+
+
 # ---------------------------------------------------------------------------
 # Default seed data
 # ---------------------------------------------------------------------------
@@ -451,6 +467,16 @@ DEFAULT_SETTINGS = {
     "basiq_last_sync_count": "",
     "mcp_api_key": "",
     "payslip_watch_enabled": "1",
+    "ai_ocr_enabled": "1",
+    "ai_gmail_enabled": "1",
+    "ai_newsletter_enabled": "1",
+    "ai_categorise_enabled": "1",
+    "ai_payslip_enabled": "1",
+    "ai_ocr_calls_est": "10",
+    "ai_gmail_calls_est": "20",
+    "ai_newsletter_calls_est": "4",
+    "ai_categorise_calls_est": "50",
+    "ai_payslip_calls_est": "2",
 }
 
 # Tables that need a user_id column added for existing DBs
