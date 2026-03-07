@@ -161,6 +161,10 @@
   .alert-success { background: rgba(52,211,153,.1); border: 1px solid rgba(52,211,153,.2); color: var(--green); }
   .alert-error { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.2); color: var(--red); }
 
+  /* ── Skeleton loader ── */
+  .skeleton { background: linear-gradient(90deg, var(--surface) 25%, var(--border) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; }
+  @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+
   /* ── Dividers ── */
   .divider { height: 1px; background: var(--border); margin: 12px 0; }
 
@@ -1066,12 +1070,21 @@
                     x-text="t.category_name || 'Uncategorised'"></span>
                   <span x-show="t.tax_deductible" class="badge badge-accent">tax</span>
                   <span x-show="t.is_overseas" class="badge" style="background:#1e3a5f;color:#7dd3fc;" :title="t.currency_code ? 'Currency: ' + t.currency_code : 'Overseas transaction'">🌐<span x-show="t.currency_code" x-text="' ' + t.currency_code" style="font-size:10px;"></span></span>
+                  <span x-show="t.is_reimbursable" class="badge"
+                    :style="t.reimbursement_received ? 'background:#14532d22;color:#4ade80;' : 'background:#7c3aed22;color:#a78bfa;'"
+                    x-text="t.reimbursement_received ? '💼 Reimbursed' : '💼 Pending'"></span>
                 </div>
               </div>
               <div style="text-align:right;flex-shrink:0;">
                 <div class="amt" :class="t.is_credit ? 'credit' : ''"
                   x-text="(t.is_credit ? '+' : '-') + '$' + fmt(t.amount)"></div>
-                <button @click="openEditTxn(t)" style="font-size:11px;color:var(--accent);margin-top:4px;background:none;border:none;cursor:pointer;padding:0;font-family:inherit;">Edit</button>
+                <div style="display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:4px;">
+                  <button @click="toggleReimbursable(t)"
+                    :title="t.is_reimbursable ? (t.reimbursement_received ? 'Received — tap to unmark' : 'Pending — tap to mark received') : 'Mark as work reimbursable'"
+                    style="font-size:14px;background:none;border:none;cursor:pointer;padding:0;line-height:1;"
+                    :style="t.is_reimbursable ? 'opacity:1;' : 'opacity:0.25;'">💼</button>
+                  <button @click="openEditTxn(t)" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0;font-family:inherit;">Edit</button>
+                </div>
               </div>
             </div>
           </template>
@@ -1299,8 +1312,15 @@
             <div class="grid" style="grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px;">
               <div><label class="form-label">Merchant</label>
                 <input x-model="ocrResult.extracted.merchant" /></div>
-              <div><label class="form-label">Amount (AUD $)</label>
-                <input type="number" x-model="ocrResult.extracted.amount" step="0.01" min="0" /></div>
+              <div x-show="!(ocrResult.extracted.currency && ocrResult.extracted.currency !== 'AUD')">
+                <label class="form-label">Amount (AUD $)</label>
+                <input type="number" x-model="ocrResult.extracted.amount" step="0.01" min="0" />
+              </div>
+              <div x-show="ocrResult.extracted.currency && ocrResult.extracted.currency !== 'AUD'">
+                <label class="form-label" x-text="'Amount (' + (ocrResult.extracted.currency || 'foreign') + ')'"></label>
+                <input type="number" x-model="ocrResult.extracted.amount" step="0.01" min="0" readonly
+                  style="opacity:0.6;cursor:not-allowed;" />
+              </div>
               <div><label class="form-label">Date</label>
                 <input type="date" x-model="ocrResult.extracted.date" /></div>
               <div><label class="form-label">Category</label>
@@ -1321,20 +1341,6 @@
               <div style="font-size:11px;color:var(--muted);width:100%;">AUD equivalent auto-converted via live exchange rate. You can adjust if needed. Original currency is stored in the transaction notes.</div>
             </div>
 
-            <!-- Flags row -->
-            <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:14px;">
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                <input type="checkbox" x-model="ocrResult.extracted.tax_deductible"
-                  style="width:15px;height:15px;accent-color:var(--accent);" />
-                Tax deductible
-              </label>
-              <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
-                <input type="checkbox" x-model="ocrResult.extracted.is_reimbursable"
-                  style="width:15px;height:15px;accent-color:var(--accent);" />
-                Reimbursable (work / employer)
-              </label>
-            </div>
-
             <!-- Best match transaction -->
             <template x-if="ocrResult.match">
               <div style="padding:10px 12px;background:rgba(99,102,241,.08);border:1px solid rgba(99,102,241,.25);border-radius:10px;margin-bottom:12px;">
@@ -1347,7 +1353,20 @@
                   </div>
                   <div style="font-size:17px;font-weight:700;" x-text="'$' + fmt(ocrResult.match.amount)"></div>
                 </div>
-                <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+                <!-- Flags — right before action buttons -->
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin:10px 0 8px;">
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" x-model="ocrResult.extracted.tax_deductible"
+                      style="width:15px;height:15px;accent-color:var(--accent);" />
+                    Tax deductible
+                  </label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" x-model="ocrResult.extracted.is_reimbursable"
+                      style="width:15px;height:15px;accent-color:var(--accent);" />
+                    💼 Work reimbursable
+                  </label>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
                   <button @click="attachOcrReceipt(ocrResult.match.id)" class="btn btn-primary btn-sm" :disabled="ocrAttaching">
                     <span x-show="!ocrAttaching">Attach to this transaction</span>
                     <span x-show="ocrAttaching">Saving…</span>
@@ -1369,6 +1388,19 @@
                       <option :value="a.id" x-text="`${a.name} (${a.bank})`"></option>
                     </template>
                   </select>
+                </div>
+                <!-- Flags — right before action button -->
+                <div style="display:flex;gap:20px;flex-wrap:wrap;margin-bottom:10px;">
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" x-model="ocrResult.extracted.tax_deductible"
+                      style="width:15px;height:15px;accent-color:var(--accent);" />
+                    Tax deductible
+                  </label>
+                  <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;">
+                    <input type="checkbox" x-model="ocrResult.extracted.is_reimbursable"
+                      style="width:15px;height:15px;accent-color:var(--accent);" />
+                    💼 Work reimbursable
+                  </label>
                 </div>
                 <button @click="attachOcrReceipt(null, true)" class="btn btn-primary btn-sm" :disabled="ocrAttaching || !ocrNewAccountId">
                   <span x-show="!ocrAttaching">Create transaction + attach</span>
@@ -1415,13 +1447,56 @@
             <div class="section-title">Manage Accounts</div>
             <div style="display:flex;flex-direction:column;gap:0;margin-bottom:16px;">
               <template x-for="a in accounts" :key="a.id">
-                <div style="display:flex;align-items:center;justify-content:space-between;
-                  padding:10px 0;border-bottom:1px solid var(--border);">
-                  <div>
-                    <div style="font-size:14px;font-weight:500;" x-text="a.name"></div>
-                    <div style="font-size:12px;color:var(--muted);"
-                      x-text="`${a.bank}${a.account_number ? ' · ' + a.account_number : ''}`"></div>
+                <div style="padding:10px 0;border-bottom:1px solid var(--border);">
+                  <!-- Name row with inline edit -->
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                    <template x-if="accountEditId !== a.id">
+                      <div style="flex:1;">
+                        <div style="font-size:14px;font-weight:500;" x-text="a.name"></div>
+                        <div style="font-size:12px;color:var(--muted);"
+                          x-text="`${a.bank}${a.account_number ? ' · ' + a.account_number : ''}`"></div>
+                      </div>
+                    </template>
+                    <template x-if="accountEditId === a.id">
+                      <input type="text" x-model="accountEditName" style="flex:1;font-size:13px;padding:4px 8px;"
+                        @keydown.enter="saveAccountName(a.id)" @keydown.escape="accountEditId=null" />
+                    </template>
+                    <div style="display:flex;gap:4px;">
+                      <button x-show="accountEditId !== a.id" @click="accountEditId=a.id;accountEditName=a.name"
+                        class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px;">Edit</button>
+                      <button x-show="accountEditId === a.id" @click="saveAccountName(a.id)"
+                        class="btn btn-primary btn-sm" style="padding:2px 8px;font-size:11px;">Save</button>
+                      <button x-show="accountEditId === a.id" @click="accountEditId=null"
+                        class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px;">Cancel</button>
+                    </div>
                   </div>
+                  <!-- Loan sync + offset selectors (visible when loans exist) -->
+                  <template x-if="loans.length > 0">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:6px;">
+                      <div style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Repayment sync</span>
+                        <select style="font-size:12px;padding:2px 6px;height:auto;"
+                          :value="a.linked_loan_id || ''"
+                          @change="linkAccountToLoan(a.id, $event.target.value)">
+                          <option value="">— none —</option>
+                          <template x-for="l in loans" :key="l.id">
+                            <option :value="l.id" x-text="l.name"></option>
+                          </template>
+                        </select>
+                      </div>
+                      <div style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;">Offset account for</span>
+                        <select style="font-size:12px;padding:2px 6px;height:auto;"
+                          :value="a.offset_loan_id || ''"
+                          @change="linkAccountAsOffset(a.id, $event.target.value)">
+                          <option value="">— none —</option>
+                          <template x-for="l in loans" :key="l.id">
+                            <option :value="l.id" x-text="l.name"></option>
+                          </template>
+                        </select>
+                      </div>
+                    </div>
+                  </template>
                 </div>
               </template>
               <p x-show="accounts.length === 0" style="font-size:13px;color:var(--muted);padding:8px 0;">No accounts yet.</p>
@@ -2162,6 +2237,38 @@
           </div>
         </template>
 
+        <!-- Work Travel Card (Car Log) -->
+        <div class="card" x-show="tripSummary && (tripSummary.work_km > 0 || tripSummary.work_toll_total > 0)" style="margin-bottom:20px;border-left:3px solid #22c55e;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <div style="font-weight:600;font-size:15px;">🚗 Work Travel</div>
+            <button @click="page='trips'" class="btn btn-ghost btn-sm">View Car Log →</button>
+          </div>
+          <div class="grid grid-4 gap-3" style="margin-bottom:10px;">
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Work km</div>
+              <div style="font-size:18px;font-weight:700;" x-text="(tripSummary?.work_km || 0).toFixed(1) + ' km'"></div>
+              <div style="font-size:10px;color:var(--amber);" x-show="tripSummary?.capped_at_5000">⚠️ 5,000 km cap applied</div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">ATO Rate</div>
+              <div style="font-size:18px;font-weight:700;" x-text="(tripSummary?.ato_km_rate || 0.88) + '¢/km'"></div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Km Deduction</div>
+              <div style="font-size:18px;font-weight:700;color:var(--green);" x-text="'$' + fmt(tripSummary?.cents_per_km_deduction)"></div>
+            </div>
+            <div style="text-align:center;">
+              <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Work Tolls</div>
+              <div style="font-size:18px;font-weight:700;color:var(--green);" x-text="'$' + fmt(tripSummary?.work_toll_total)"></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:space-between;padding-top:10px;border-top:1px solid var(--border);font-size:13px;">
+            <span style="color:var(--muted);">Total estimated work travel deduction (cents per km + tolls)</span>
+            <span style="font-weight:700;color:var(--green);" x-text="'$' + fmt(tripSummary?.total_work_deduction)"></span>
+          </div>
+          <div style="font-size:11px;color:var(--muted);margin-top:6px;">Cents per km method (max 5,000 km). Work tolls are separately deductible. Verify with your tax agent.</div>
+        </div>
+
         <!-- Tax Estimate Card -->
         <div class="card" style="margin-bottom:20px;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
@@ -2230,6 +2337,44 @@
           </div>
         </div>
 
+        <!-- Reimbursement Auto-Detection Banner -->
+        <template x-if="reimbMatch && reimbMatch.matches && reimbMatch.matches.filter(m => !(JSON.parse(localStorage.getItem('dismissedReimbMatches')||'[]')).includes(m.txn_id)).length > 0">
+          <div class="card" style="margin-bottom:16px;border-left:4px solid var(--amber,#f59e0b);background:rgba(245,158,11,.04);">
+            <div style="display:flex;align-items:flex-start;gap:10px;">
+              <div style="font-size:22px;flex-shrink:0;">🔍</div>
+              <div style="flex:1;">
+                <div style="font-size:14px;font-weight:700;margin-bottom:4px;">Possible reimbursement payment detected</div>
+                <div style="font-size:12px;color:var(--muted);margin-bottom:12px;">
+                  An incoming payment matches your <strong x-text="reimbMatch.pending_count + ' pending expense' + (reimbMatch.pending_count !== 1 ? 's' : '')"></strong>
+                  totalling <strong x-text="'$' + fmt(reimbMatch.pending_total)"></strong>. Review and approve to mark them all as reimbursed.
+                </div>
+                <template x-for="m in reimbMatch.matches.filter(m => !(JSON.parse(localStorage.getItem('dismissedReimbMatches')||'[]')).includes(m.txn_id))" :key="m.txn_id">
+                  <div style="background:var(--surf2);border-radius:10px;padding:10px 12px;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                      <div>
+                        <div style="font-size:13px;font-weight:600;" x-text="m.description"></div>
+                        <div style="font-size:11px;color:var(--muted);" x-text="m.date"></div>
+                      </div>
+                      <div style="text-align:right;">
+                        <div style="font-size:17px;font-weight:700;color:var(--green);" x-text="'+$' + fmt(m.amount)"></div>
+                        <div style="font-size:10px;margin-top:2px;"
+                          :style="m.confidence === 'high' ? 'color:var(--green)' : m.confidence === 'medium' ? 'color:var(--amber)' : 'color:var(--muted)'"
+                          x-text="m.confidence === 'high' ? '✓ Exact match' : m.confidence === 'medium' ? '~ Close match' : '? Possible match'"></div>
+                        <div x-show="m.employer_match" style="font-size:10px;color:var(--accent);">employer name matched</div>
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                      <button @click="approveReimbMatch()" class="btn btn-primary btn-sm"
+                        x-text="'Approve — mark ' + reimbMatch.pending_count + ' expense' + (reimbMatch.pending_count !== 1 ? 's' : '') + ' as reimbursed'"></button>
+                      <button @click="dismissReimbMatch(m.txn_id)" class="btn btn-ghost btn-sm">Not a match</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <!-- Reimbursable Work Expenses Card -->
         <div class="card" style="margin-bottom:16px;" x-show="reimbSummary">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px;">
@@ -2255,7 +2400,11 @@
           </div>
           <template x-if="(reimbSummary?.pending || []).length > 0">
             <div>
-              <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;margin-bottom:8px;">Awaiting Reimbursement</div>
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px;">
+                <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:0.06em;">Awaiting Reimbursement</div>
+                <button @click="markAllReimbReceived()" class="btn btn-primary btn-sm"
+                  x-text="'Mark all received — $' + fmt(reimbSummary?.pending_total)"></button>
+              </div>
               <div style="overflow-x:auto;">
                 <table style="width:100%;font-size:13px;">
                   <thead><tr>
@@ -5896,6 +6045,372 @@
       </div>
 
 
+      <!-- ═══ CAR LOG PAGE ═══ -->
+      <div x-show="page === 'trips'" x-cloak>
+        <div class="page-container">
+
+          <!-- Header -->
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:20px;">
+            <div>
+              <h2 style="font-size:20px;font-weight:700;margin:0;">Car Log</h2>
+              <div style="font-size:12px;color:var(--muted);margin-top:2px;">ATO work-related travel (cents per km method)</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <label class="form-label" style="margin:0;font-size:12px;">FY</label>
+                <select x-model.number="tripFY" @change="loadTrips(); loadTripSummary()"
+                  style="font-size:13px;padding:5px 10px;width:auto;">
+                  <template x-for="y in [2024,2025,2026,2027]" :key="y">
+                    <option :value="y" x-text="(y-1) + '–' + String(y).slice(2)"></option>
+                  </template>
+                </select>
+              </div>
+              <button @click="resetTripForm(); tripFormShow=true" class="btn btn-primary btn-sm"
+                x-show="!tripFormShow">+ Add Trip</button>
+            </div>
+          </div>
+
+          <!-- Summary cards -->
+          <template x-if="tripSummary && (tripSummary.total_trips > 0)">
+            <div class="grid grid-4" style="margin-bottom:20px;">
+              <div class="card" style="text-align:center;padding:14px 10px;">
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Work KM</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;" x-text="(tripSummary.work_km || 0).toFixed(1)"></div>
+                <div x-show="tripSummary.capped_at_5000" style="font-size:10px;color:var(--amber);margin-top:2px;">5,000 km cap</div>
+              </div>
+              <div class="card" style="text-align:center;padding:14px 10px;">
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">ATO Rate</div>
+                <div style="font-size:22px;font-weight:700;margin-top:4px;" x-text="(tripSummary.ato_km_rate || 0.88) + '¢/km'"></div>
+                <div style="font-size:10px;color:var(--muted);margin-top:2px;">FY <span x-text="tripSummary.fy"></span></div>
+              </div>
+              <div class="card" style="text-align:center;padding:14px 10px;">
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">KM Deduction</div>
+                <div style="font-size:22px;font-weight:700;color:var(--green);margin-top:4px;" x-text="'$' + fmt(tripSummary.cents_per_km_deduction)"></div>
+              </div>
+              <div class="card" style="text-align:center;padding:14px 10px;">
+                <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Total Deduction</div>
+                <div style="font-size:22px;font-weight:700;color:var(--green);margin-top:4px;" x-text="'$' + fmt(tripSummary.total_work_deduction)"></div>
+                <div x-show="tripSummary.work_toll_total > 0" style="font-size:10px;color:var(--muted);margin-top:2px;" x-text="'incl. $' + fmt(tripSummary.work_toll_total) + ' tolls'"></div>
+              </div>
+            </div>
+          </template>
+
+          <!-- ATO notice -->
+          <div style="font-size:11px;color:var(--muted);background:var(--surf2);border-radius:8px;padding:8px 12px;margin-bottom:18px;display:flex;gap:8px;align-items:flex-start;">
+            <span style="flex-shrink:0;">ℹ️</span>
+            <span>Cents per km method: <strong x-text="(tripSummary?.ato_km_rate || 0.88) + '¢/km'"></strong>, max 5,000 km/year per taxpayer. Claim without receipts — just reasonable records. Tolls are a separate deduction if work-related. Estimate only — consult your tax agent.</span>
+          </div>
+
+          <!-- Add/Edit Form -->
+          <div class="card" x-show="tripFormShow" style="margin-bottom:20px;border-left:3px solid var(--accent);">
+            <div style="font-size:15px;font-weight:700;margin-bottom:14px;" x-text="tripEditId ? 'Edit Trip' : 'Add Trip'"></div>
+            <div class="grid grid-2" style="gap:12px;margin-bottom:12px;">
+              <div>
+                <label class="form-label">Date *</label>
+                <input type="date" x-model="tripForm.date" />
+              </div>
+              <div>
+                <label class="form-label">Purpose *</label>
+                <select x-model="tripForm.purpose">
+                  <option value="work">Work</option>
+                  <option value="medical">Medical</option>
+                  <option value="charity">Charity</option>
+                  <option value="personal">Personal</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Description</label>
+                <input type="text" x-model="tripForm.description" placeholder="e.g. Client meeting, Site visit" />
+              </div>
+              <div>
+                <label class="form-label">Distance (km) *</label>
+                <input type="number" x-model="tripForm.km" step="0.1" min="0" placeholder="0.0" />
+              </div>
+              <div>
+                <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+                  <span>Start Location</span>
+                  <button @click="getLocation('start')" class="btn btn-ghost" style="font-size:11px;padding:2px 8px;height:auto;"
+                    :disabled="tripGeoLoading.start">
+                    <span x-show="!tripGeoLoading.start">📍 Use GPS</span>
+                    <span x-show="tripGeoLoading.start">Locating…</span>
+                  </button>
+                </label>
+                <input type="text" x-model="tripForm.start_location" placeholder="e.g. Home, Office, Client address" />
+              </div>
+              <div>
+                <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+                  <span>End Location</span>
+                  <button @click="getLocation('end')" class="btn btn-ghost" style="font-size:11px;padding:2px 8px;height:auto;"
+                    :disabled="tripGeoLoading.end">
+                    <span x-show="!tripGeoLoading.end">📍 Use GPS</span>
+                    <span x-show="tripGeoLoading.end">Locating…</span>
+                  </button>
+                </label>
+                <input type="text" x-model="tripForm.end_location" placeholder="e.g. Client site, Meeting address" />
+              </div>
+              <div>
+                <label class="form-label">Toll Cost ($)</label>
+                <input type="number" x-model="tripForm.toll" step="0.01" min="0" placeholder="0.00" />
+              </div>
+              <div>
+                <label class="form-label">Notes</label>
+                <input type="text" x-model="tripForm.notes" placeholder="Optional notes" />
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+              <button @click="saveTrip()" class="btn btn-primary btn-sm" :disabled="tripSaving || !tripForm.km || !tripForm.date">
+                <span x-show="!tripSaving" x-text="tripEditId ? 'Update Trip' : 'Save Trip'"></span>
+                <span x-show="tripSaving">Saving…</span>
+              </button>
+              <button @click="tripFormShow=false; resetTripForm()" class="btn btn-ghost btn-sm">Cancel</button>
+            </div>
+          </div>
+
+          <!-- Trips list -->
+          <div class="card">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+              <div style="font-size:14px;font-weight:600;">
+                Trips
+                <span x-show="trips.length" style="font-size:12px;font-weight:400;color:var(--muted);" x-text="'(' + trips.length + ')'"></span>
+              </div>
+              <div x-show="tripsLoading" style="font-size:12px;color:var(--muted);">Loading…</div>
+            </div>
+
+            <!-- Empty state -->
+            <div x-show="!tripsLoading && trips.length === 0"
+              style="text-align:center;padding:40px 20px;color:var(--muted);">
+              <div style="font-size:32px;margin-bottom:10px;">🚗</div>
+              <div style="font-size:14px;font-weight:600;margin-bottom:6px;">No trips logged yet</div>
+              <div style="font-size:13px;">Add your first trip to start tracking work-related travel for ATO tax purposes.</div>
+              <button @click="resetTripForm(); tripFormShow=true" class="btn btn-primary btn-sm" style="margin-top:14px;">+ Add First Trip</button>
+            </div>
+
+            <!-- Trip rows -->
+            <template x-for="trip in trips" :key="trip.id">
+              <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;border-bottom:1px solid var(--border);"
+                   :style="trips.indexOf(trip) === trips.length-1 ? 'border-bottom:none' : ''">
+                <!-- Purpose badge -->
+                <div style="flex-shrink:0;margin-top:2px;">
+                  <span style="display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;"
+                    :style="trip.purpose === 'work' ? 'background:rgba(99,102,241,.15);color:var(--accent)' :
+                            trip.purpose === 'medical' ? 'background:rgba(34,197,94,.15);color:var(--green)' :
+                            trip.purpose === 'charity' ? 'background:rgba(245,158,11,.15);color:var(--amber)' :
+                            'background:var(--surf2);color:var(--muted)'"
+                    x-text="trip.purpose"></span>
+                </div>
+                <!-- Details -->
+                <div style="flex:1;min-width:0;">
+                  <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;">
+                    <div style="font-size:13px;font-weight:600;" x-text="trip.description || (trip.start_location && trip.end_location ? trip.start_location + ' → ' + trip.end_location : 'Trip')"></div>
+                    <div style="font-size:11px;color:var(--muted);" x-text="trip.date"></div>
+                  </div>
+                  <div x-show="trip.start_location || trip.end_location" style="font-size:11px;color:var(--muted);margin-top:2px;">
+                    <span x-text="[trip.start_location, trip.end_location].filter(Boolean).join(' → ')"></span>
+                  </div>
+                  <div x-show="trip.notes" style="font-size:11px;color:var(--muted);margin-top:2px;" x-text="trip.notes"></div>
+                  <div x-show="trip.toll_cents > 0" style="font-size:11px;color:var(--amber);margin-top:2px;" x-text="'Toll: $' + fmt(trip.toll_cents / 100)"></div>
+                </div>
+                <!-- km + actions -->
+                <div style="flex-shrink:0;text-align:right;">
+                  <div style="font-size:16px;font-weight:700;" x-text="trip.km.toFixed(1) + ' km'"></div>
+                  <div x-show="trip.purpose === 'work'" style="font-size:11px;color:var(--green);" x-text="'≈ $' + fmt(trip.km * (tripSummary?.ato_km_rate || 0.88))"></div>
+                  <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
+                    <button @click="editTrip(trip)" class="btn btn-ghost" style="font-size:11px;padding:3px 10px;height:auto;">Edit</button>
+                    <button @click="deleteTrip(trip.id)" class="btn btn-ghost" style="font-size:11px;padding:3px 10px;height:auto;color:var(--red,#ef4444);">Delete</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <!-- FY Deduction Summary (shown when has trips) -->
+          <template x-if="tripSummary && tripSummary.total_trips > 0">
+            <div class="card" style="margin-top:16px;background:var(--surf2);">
+              <div style="font-size:13px;font-weight:600;margin-bottom:10px;">FY <span x-text="tripSummary.fy"></span> Summary</div>
+              <div style="display:flex;flex-direction:column;gap:6px;font-size:13px;">
+                <template x-for="[purpose, km] in Object.entries(tripSummary.km_by_purpose || {})" :key="purpose">
+                  <div style="display:flex;justify-content:space-between;">
+                    <span style="text-transform:capitalize;" x-text="purpose + ' km'"></span>
+                    <span x-text="km.toFixed(1) + ' km'"></span>
+                  </div>
+                </template>
+                <div style="border-top:1px solid var(--border);margin-top:4px;padding-top:8px;display:flex;justify-content:space-between;font-weight:600;">
+                  <span>Estimated Tax Deduction</span>
+                  <span style="color:var(--green);" x-text="'$' + fmt(tripSummary.total_work_deduction)"></span>
+                </div>
+                <div x-show="tripSummary.capped_at_5000" style="font-size:11px;color:var(--amber);">
+                  Work km capped at 5,000 km for ATO cents per km method.
+                </div>
+              </div>
+            </div>
+          </template>
+
+        </div>
+      </div>
+
+
+      <!-- ═══ FINANCIAL ADVISOR PAGE ═══ -->
+      <div x-show="page === 'advisor'" x-cloak>
+        <div style="max-width:800px;">
+
+          <!-- Header -->
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <div style="font-size:22px;font-weight:700;">🤝 Financial Advisor</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:2px;">AI-powered review of your financial situation — personalised recommendations for your money</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button @click="advisorShowHistory=!advisorShowHistory; if(advisorShowHistory) loadAdvisorHistory()" class="btn" style="font-size:13px;">
+                📋 History
+              </button>
+              <button @click="generateAdvisorReport()" class="btn btn-primary" :disabled="advisorLoading" style="min-width:140px;">
+                <span x-show="advisorLoading">⌛ Generating…</span>
+                <span x-show="!advisorLoading" x-text="advisorReport ? '↻ Refresh Analysis' : '✨ Generate Analysis'"></span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Context / Notes input -->
+          <div class="card" style="padding:12px 16px;margin-bottom:12px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;" @click="advisorShowContext=!advisorShowContext">
+              <div style="font-size:13px;font-weight:600;">📝 Context &amp; Notes <span style="font-weight:400;color:var(--muted);font-size:12px;">(optional — help the AI interpret your data correctly)</span></div>
+              <span style="color:var(--muted);font-size:12px;" x-text="advisorShowContext ? '▲ Hide' : '▼ Show'"></span>
+            </div>
+            <div x-show="advisorShowContext" style="margin-top:10px;">
+              <textarea x-model="advisorUserContext" rows="4" class="input" style="width:100%;font-size:13px;resize:vertical;"
+                placeholder="e.g. 'Large transfers are internal account movements between offset and main account — not real spending. I have two employers: Company A (main job) and Company B (casual). My mortgage is with Macquarie, offset is fully linked.'"></textarea>
+              <div style="font-size:11px;color:var(--muted);margin-top:6px;">This context is sent to the AI with every new report you generate. It helps correct common misinterpretations of your data.</div>
+            </div>
+          </div>
+
+          <!-- Disclaimer -->
+          <div class="alert" style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--muted);margin-bottom:16px;">
+            ⚠️ <strong>General advice only.</strong> This is AI-generated financial education based on your data. It is not personal financial advice. Consult a licensed financial adviser before making significant financial decisions.
+          </div>
+
+          <!-- Error -->
+          <div x-show="advisorError" class="alert alert-error" x-text="advisorError" style="margin-bottom:16px;"></div>
+
+          <!-- ── History view ─────────────────────────────────────────────── -->
+          <div x-show="advisorShowHistory">
+            <!-- History detail (viewing a past session) -->
+            <div x-show="advisorHistorySession">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                <button @click="advisorHistorySession=null" class="btn" style="font-size:13px;">← Back to list</button>
+                <div style="font-size:13px;color:var(--muted);" x-text="advisorHistorySession ? 'Report from ' + new Date(advisorHistorySession.created_at).toLocaleString('en-AU') : ''"></div>
+              </div>
+              <div class="card advisor-report" style="padding:24px;line-height:1.8;font-size:14px;" x-html="renderAdvisorMarkdown(advisorHistorySession?.report || '')"></div>
+              <!-- Past chat log -->
+              <div x-show="advisorHistorySession?.chat_messages?.length > 0" style="margin-top:16px;">
+                <div style="font-size:13px;font-weight:600;margin-bottom:8px;color:var(--muted);">Q&amp;A from this session</div>
+                <template x-for="msg in (advisorHistorySession?.chat_messages || [])" :key="msg.ts">
+                  <div :style="'display:flex;gap:10px;margin-bottom:10px;flex-direction:' + (msg.role==='user'?'row-reverse':'row')">
+                    <div :style="'max-width:85%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.6;' + (msg.role==='user'?'background:var(--primary);color:#fff;border-bottom-right-radius:4px;':'background:var(--card-bg);border:1px solid var(--border);border-bottom-left-radius:4px;')"
+                      x-html="msg.role==='assistant' ? renderAdvisorMarkdown(msg.content) : msg.content"></div>
+                  </div>
+                </template>
+              </div>
+            </div>
+            <!-- History list -->
+            <div x-show="!advisorHistorySession">
+              <div style="font-size:15px;font-weight:600;margin-bottom:12px;">Past Reports</div>
+              <div x-show="advisorHistory.length === 0" style="color:var(--muted);font-size:13px;padding:20px 0;">No past reports yet.</div>
+              <template x-for="h in advisorHistory" :key="h.id">
+                <div class="card" style="padding:14px 16px;margin-bottom:10px;cursor:pointer;" @click="openAdvisorHistorySession(h.id)">
+                  <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="font-size:12px;color:var(--muted);margin-bottom:4px;" x-text="new Date(h.created_at).toLocaleString('en-AU')"></div>
+                      <div style="font-size:13px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="h.preview || '(no preview)'"></div>
+                      <div x-show="h.user_context" style="font-size:11px;color:var(--muted);margin-top:4px;" x-text="'Notes: ' + h.user_context.slice(0,80) + (h.user_context.length>80?'…':'')"></div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0;">
+                      <span x-show="h.has_chat" style="font-size:10px;background:rgba(99,102,241,0.12);color:var(--primary);padding:2px 7px;border-radius:10px;">Q&amp;A</span>
+                      <span style="font-size:18px;color:var(--muted);">›</span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <!-- ── Current report view ──────────────────────────────────────── -->
+          <div x-show="!advisorShowHistory">
+
+            <!-- Empty state -->
+            <div x-show="!advisorReport && !advisorLoading" class="card" style="text-align:center;padding:48px 24px;">
+              <div style="font-size:48px;margin-bottom:12px;">🤝</div>
+              <div style="font-size:18px;font-weight:600;margin-bottom:8px;">Ready to review your finances</div>
+              <div style="font-size:13px;color:var(--muted);margin-bottom:20px;max-width:400px;margin-left:auto;margin-right:auto;">
+                Get personalised recommendations on your mortgage, spending, savings, and investments — tailored to Australian tax and market context.
+              </div>
+              <button @click="generateAdvisorReport()" class="btn btn-primary" :disabled="advisorLoading">
+                ✨ Generate My Financial Report
+              </button>
+            </div>
+
+            <!-- Loading skeleton -->
+            <div x-show="advisorLoading" class="card" style="padding:24px;">
+              <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px;">
+                <div class="skeleton" style="width:32px;height:32px;border-radius:50%;"></div>
+                <div class="skeleton" style="width:200px;height:16px;border-radius:4px;"></div>
+              </div>
+              <div class="skeleton" style="width:100%;height:12px;border-radius:4px;margin-bottom:8px;"></div>
+              <div class="skeleton" style="width:90%;height:12px;border-radius:4px;margin-bottom:8px;"></div>
+              <div class="skeleton" style="width:95%;height:12px;border-radius:4px;margin-bottom:8px;"></div>
+              <div class="skeleton" style="width:80%;height:12px;border-radius:4px;margin-bottom:20px;"></div>
+              <div class="skeleton" style="width:100%;height:12px;border-radius:4px;margin-bottom:8px;"></div>
+              <div class="skeleton" style="width:85%;height:12px;border-radius:4px;margin-bottom:8px;"></div>
+              <div style="font-size:12px;color:var(--muted);text-align:center;margin-top:16px;">Analysing your financial data and market context… this may take 15–30 seconds</div>
+            </div>
+
+            <!-- Report display -->
+            <div x-show="advisorReport && !advisorLoading">
+              <!-- Generated timestamp -->
+              <div x-show="advisorGeneratedAt" style="font-size:11px;color:var(--muted);margin-bottom:12px;text-align:right;"
+                x-text="'Generated ' + (advisorGeneratedAt ? new Date(advisorGeneratedAt).toLocaleString('en-AU') : '')"></div>
+
+              <!-- Report content -->
+              <div class="card advisor-report" style="padding:24px;line-height:1.8;font-size:14px;" x-html="renderAdvisorMarkdown(advisorReport)"></div>
+
+              <!-- ── Q&A Chat section ───────────────────────────────────── -->
+              <div style="margin-top:20px;">
+                <div style="font-size:15px;font-weight:600;margin-bottom:12px;">💬 Ask a follow-up question</div>
+
+                <!-- Chat history -->
+                <div x-show="advisorChat.length > 0" style="margin-bottom:12px;">
+                  <template x-for="msg in advisorChat" :key="msg.ts + msg.role">
+                    <div :style="'display:flex;gap:10px;margin-bottom:10px;flex-direction:' + (msg.role==='user'?'row-reverse':'row')">
+                      <div :style="'max-width:85%;padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.6;' + (msg.role==='user'?'background:var(--primary);color:#fff;border-bottom-right-radius:4px;':'background:var(--card-bg);border:1px solid var(--border);border-bottom-left-radius:4px;')"
+                        x-html="msg.role==='assistant' ? renderAdvisorMarkdown(msg.content) : msg.content.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')"></div>
+                    </div>
+                  </template>
+                  <div id="advisor-chat-bottom"></div>
+                </div>
+
+                <!-- Chat loading indicator -->
+                <div x-show="advisorChatLoading" style="display:flex;gap:8px;margin-bottom:12px;align-items:center;">
+                  <div style="width:28px;height:28px;border-radius:50%;background:var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:14px;">🤝</div>
+                  <div style="padding:10px 14px;border-radius:12px;border-bottom-left-radius:4px;background:var(--card-bg);border:1px solid var(--border);font-size:13px;color:var(--muted);">Thinking…</div>
+                </div>
+
+                <!-- Chat input -->
+                <div class="card" style="padding:12px;display:flex;gap:8px;align-items:flex-end;">
+                  <textarea x-model="advisorChatInput" rows="2" class="input" style="flex:1;font-size:13px;resize:none;"
+                    placeholder="Ask about the advice… e.g. 'Why is my offset better than extra repayments?' or 'How much would I save by investing $500/month instead?'"
+                    @keydown.enter.prevent="if(!$event.shiftKey) sendAdvisorChat()"></textarea>
+                  <button @click="sendAdvisorChat()" class="btn btn-primary" :disabled="advisorChatLoading || !advisorChatInput.trim()" style="padding:8px 16px;white-space:nowrap;">
+                    Send →
+                  </button>
+                </div>
+                <div style="font-size:11px;color:var(--muted);margin-top:6px;">Press Enter to send · Shift+Enter for new line · Questions are saved with this report</div>
+              </div>
+            </div>
+
+          </div><!-- /!advisorShowHistory -->
+        </div>
+      </div>
+
+
       <!-- ═══ CHAT HISTORY PAGE ═══ -->
       <div x-show="page === 'chathistory'" x-cloak>
         <div style="max-width:760px;">
@@ -6269,6 +6784,9 @@
     <button class="more-item" @click="page='tax'; moreOpen=false">
       <span>🧾</span><span>Tax</span>
     </button>
+    <button class="more-item" @click="page='trips'; moreOpen=false; loadTrips(); loadTripSummary()">
+      <span>🚗</span><span>Car Log</span>
+    </button>
     <button class="more-item" @click="page='budgets'; moreOpen=false">
       <span>📈</span><span>Budgets</span>
     </button>
@@ -6315,6 +6833,9 @@
     </button>
     <button class="more-item" @click="page='pulse'; moreOpen=false">
       <span>📡</span><span>Market Pulse</span>
+    </button>
+    <button class="more-item" @click="page='advisor'; moreOpen=false; loadAdvisorReport()">
+      <span>🤝</span><span>Advisor</span>
     </button>
     <button class="more-item" @click="page='pet'; moreOpen=false">
       <span>🐾</span><span>Finance Pet</span>
@@ -6366,6 +6887,11 @@
         <input type="checkbox" x-model="editModal.is_flagged"
           style="width:16px;height:16px;accent-color:var(--red);" />
         Flag as unusual
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" x-model="editModal.is_reimbursable"
+          style="width:16px;height:16px;accent-color:var(--accent);" />
+        💼 Work reimbursable (excluded from personal spend)
       </label>
       <div>
         <label class="form-label">Notes</label>
@@ -7290,8 +7816,53 @@
         </div>
       </div></template>
 
-      <!-- ── Step 7: AI features ── -->
+      <!-- ── Step 7: Loans ── -->
       <template x-if="wizardStep === 7"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+        <div style="font-size:48px;text-align:center;margin-bottom:16px;">🏠</div>
+        <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Mortgage &amp; Loans</h2>
+        <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Add your home loan or other debts to track payoff dates, interest cost, and how your offset account is performing.</p>
+        <div x-show="!wizardLoanAdded" style="display:flex;flex-direction:column;gap:14px;">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+            <div style="grid-column:1/-1;">
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Loan name</label>
+              <input type="text" x-model="wizardData.loanName" placeholder="e.g. Macquarie Home Loan" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Loan type</label>
+              <select x-model="wizardData.loanType" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+                <option value="mortgage">Mortgage</option>
+                <option value="personal">Personal loan</option>
+                <option value="car">Car loan</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Outstanding balance ($)</label>
+              <input type="number" x-model="wizardData.loanOutstanding" placeholder="605000" step="100" min="0" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Interest rate (% p.a.)</label>
+              <input type="number" x-model="wizardData.loanRate" placeholder="6.14" step="0.01" min="0" max="30" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Monthly repayment ($)</label>
+              <input type="number" x-model="wizardData.loanRepayment" placeholder="3535" step="10" min="0" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+            </div>
+            <div>
+              <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:5px;">Offset balance ($) <span style="font-weight:400;color:var(--muted);">optional</span></label>
+              <input type="number" x-model="wizardData.loanOffset" placeholder="0" step="100" min="0" style="width:100%;padding:13px 14px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;color:var(--text);font-size:15px;outline:none;">
+            </div>
+          </div>
+        </div>
+        <div x-show="wizardLoanAdded" style="background:var(--surf2);border:1px solid var(--green);border-radius:12px;padding:16px;">
+          <div style="font-size:15px;font-weight:600;color:var(--green);margin-bottom:4px;">✓ Loan added</div>
+          <div style="font-size:13px;color:var(--muted);">You can update details, link your offset account, and run simulations from the Loans page.</div>
+        </div>
+        <div style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5;">💡 Skip this step if you have no loans — you can add them anytime from the Loans page.</div>
+      </div></template>
+
+      <!-- ── Step 8: AI features ── -->
+      <template x-if="wizardStep === 8"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🤖</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Enable AI features</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">A Claude API key unlocks the chat assistant, payslip auto-extraction, and merchant name enrichment.</p>
@@ -7313,12 +7884,38 @@
               <div>📰 <strong>Market briefing</strong> — AI-generated summary of market conditions</div>
             </div>
           </div>
+          <!-- AI Feature Toggles -->
+          <div>
+            <div style="font-size:13px;font-weight:600;margin-bottom:10px;">AI Feature Toggles</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiCategorise" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">Auto-categorise transactions</div><div style="font-size:11px;color:var(--muted);">Suggest categories for imported transactions using AI</div></div>
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiOcr" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">OCR receipt scanning</div><div style="font-size:11px;color:var(--muted);">Extract merchant, amount, and date from receipt photos</div></div>
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiGmail" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">Gmail smart import</div><div style="font-size:11px;color:var(--muted);">Parse expenses and payslips from Gmail labels daily</div></div>
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiPayslip" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">Payslip AI extraction</div><div style="font-size:11px;color:var(--muted);">Auto-read gross pay, net pay, and super from uploaded payslips</div></div>
+              </label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiNewsletter" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">Weekly newsletter</div><div style="font-size:11px;color:var(--muted);">AI-written summary of your financial week, pushed to HA</div></div>
+              </label>
+            </div>
+          </div>
         </div>
-        <div style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5;">💡 Gemini (Google) is also supported as an alternative AI provider — configure it in Settings after setup.</div>
+        <div style="font-size:12px;color:var(--muted);margin-top:14px;line-height:1.5;">💡 Gemini (Google) is also supported as an alternative AI provider — configure it in Settings after setup. Individual features can be toggled anytime in Settings → AI Features.</div>
       </div></template>
 
-      <!-- ── Step 8: Notifications ── -->
-      <template x-if="wizardStep === 8"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <!-- ── Step 9: Notifications ── -->
+      <template x-if="wizardStep === 9"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">🔔</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Get push notifications</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Receive alerts on your phone when bills are due, budgets hit their limit, and your weekly summary is ready.</p>
@@ -7341,8 +7938,8 @@
         </div>
       </div></template>
 
-      <!-- ── Step 9: Gmail ── -->
-      <template x-if="wizardStep === 9"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
+      <!-- ── Step 10: Gmail ── -->
+      <template x-if="wizardStep === 10"><div x-transition:enter="transition ease-out duration-250" x-transition:enter-start="opacity-0 translate-x-8" x-transition:enter-end="opacity-100 translate-x-0">
         <div style="font-size:48px;text-align:center;margin-bottom:16px;">📧</div>
         <h2 style="font-size:26px;font-weight:700;text-align:center;margin:0 0 8px;">Auto-import from Gmail</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 20px;line-height:1.6;">Finance Tracker can scan Gmail labels daily and automatically import payslips and receipts — including the original PDF files.</p>
@@ -7371,8 +7968,8 @@
         </div>
       </div></template>
 
-      <!-- ── Step 10: Done ── -->
-      <template x-if="wizardStep === 10"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
+      <!-- ── Step 11: Done ── -->
+      <template x-if="wizardStep === 11"><div x-transition:enter="transition ease-out duration-300" x-transition:enter-start="opacity-0 scale-95" x-transition:enter-end="opacity-100 scale-100">
         <div style="font-size:64px;text-align:center;margin-bottom:20px;">🎉</div>
         <h2 style="font-size:28px;font-weight:700;text-align:center;margin:0 0 8px;">You're all set!</h2>
         <p style="font-size:14px;color:var(--muted);text-align:center;margin:0 0 24px;line-height:1.6;">Here's a summary of what you've configured. You can change anything in Settings at any time.</p>
@@ -7381,6 +7978,7 @@
           <div x-show="wizardImportResult?.imported>0" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">💳</span><span x-text="(wizardImportResult?.imported||0)+' transactions imported'"></span></div>
           <div x-show="wizardBillAdded" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">📅</span><span>Bill "<span x-text="wizardData.billName"></span>" added</span></div>
           <div x-show="wizardGoalAdded" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">🎯</span><span>Goal "<span x-text="wizardData.goalName"></span>" set — $<span x-text="Number(wizardData.goalTarget).toLocaleString()"></span></span></div>
+          <div x-show="wizardLoanAdded" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">🏠</span><span>Loan "<span x-text="wizardData.loanName"></span>" added — $<span x-text="Number(wizardData.loanOutstanding).toLocaleString()"></span> @ <span x-text="wizardData.loanRate"></span>%</span></div>
           <div x-show="settings.anthropic_api_key_set" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">🤖</span><span>AI features enabled</span></div>
           <div x-show="settings.ha_notify_targets" style="display:flex;align-items:center;gap:10px;font-size:14px;"><span style="font-size:20px;">🔔</span><span>Push notifications configured</span></div>
           <div x-show="!accounts.length && !wizardImportResult && !wizardBillAdded && !wizardGoalAdded" style="font-size:13px;color:var(--muted);">Setup complete — head to the Dashboard to get started.</div>
@@ -7401,9 +7999,9 @@
 
   <!-- Navigation buttons (inline, bottom of content) -->
   <div style="display:flex;align-items:center;gap:10px;margin-top:36px;padding-bottom:24px;border-top:1px solid var(--border);padding-top:20px;">
-    <button x-show="wizardStep > 0 && wizardStep < 10" @click="wizardBack()" class="btn btn-ghost">← Back</button>
+    <button x-show="wizardStep > 0 && wizardStep < wizardSteps.length - 1" @click="wizardBack()" class="btn btn-ghost">← Back</button>
     <div style="flex:1;"></div>
-    <button x-show="wizardIsOptional && wizardStep < 10" @click="wizardSkip()" class="btn btn-ghost" style="color:var(--muted);">Skip</button>
+    <button x-show="wizardIsOptional && wizardStep < wizardSteps.length - 1" @click="wizardSkip()" class="btn btn-ghost" style="color:var(--muted);">Skip</button>
     <button @click="wizardNext()" :disabled="wizardBusy" class="btn btn-primary" style="padding:10px 28px;min-width:160px;">
       <span x-show="!wizardBusy" x-text="wizardContinueLabel"></span>
       <span x-show="wizardBusy">Saving…</span>
@@ -7648,6 +8246,7 @@ function app() {
       { id: 'categories', label: 'Categories', icon: '🏷️' },
       { id: 'budgets', label: 'Budgets', icon: '📈' },
       { id: 'tax', label: 'Tax', icon: '🧾' },
+      { id: 'trips', label: 'Car Log', icon: '🚗' },
       { id: 'bills', label: 'Bills', icon: '📅' },
       { id: 'calendar', label: 'Calendar', icon: '🗓️' },
       { id: 'loans', label: 'Loans', icon: '🏠' },
@@ -7662,6 +8261,7 @@ function app() {
       { id: 'goals', label: 'Goals', icon: '🎯' },
       { id: 'reports', label: 'Reports', icon: '📋' },
       { id: 'pulse', label: 'Market Pulse', icon: '📡' },
+      { id: 'advisor', label: 'Financial Advisor', icon: '🤝' },
       { id: 'chathistory', label: 'Chat History', icon: '💬' },
       { id: 'pet', label: 'Finance Pet', icon: '🐾' },
       { id: 'setup', label: 'Setup Guide', icon: '🚀' },
@@ -7736,6 +8336,7 @@ function app() {
     taxSummary: null,
     taxEstimate: null,
     reimbSummary: null,
+    reimbMatch: null,
     taxEstimateLoading: false,
     benchmarks: null,
     benchmarksLoading: false,
@@ -7806,9 +8407,12 @@ function app() {
       accountName: '', accountBank: 'Macquarie',
       billName: '', billAmount: '', billFreq: 'monthly',
       goalName: '', goalTarget: '',
+      loanName: '', loanType: 'mortgage', loanOutstanding: '', loanRate: '', loanRepayment: '', loanOffset: '',
+      aiCategorise: true, aiOcr: true, aiGmail: true, aiPayslip: true, aiNewsletter: true,
       apiKey: '', notifyTarget: '',
       gmailPayslipLabel: '', gmailExpenseLabel: '',
     },
+    wizardLoanAdded: false,
     wizardSteps: [
       { id: 'welcome', label: 'Welcome', optional: false },
       { id: 'profile', label: 'Profile', optional: true },
@@ -7817,6 +8421,7 @@ function app() {
       { id: 'import', label: 'Import', optional: true },
       { id: 'bills', label: 'Bills', optional: true },
       { id: 'goals', label: 'Goals', optional: true },
+      { id: 'loans', label: 'Loans', optional: true },
       { id: 'ai', label: 'AI', optional: true },
       { id: 'notify', label: 'Alerts', optional: true },
       { id: 'gmail', label: 'Gmail', optional: true },
@@ -7882,10 +8487,12 @@ function app() {
     importResult: '',
     importError: '',
     newAccount: { name: '', account_number: '' },
+    accountEditId: null,
+    accountEditName: '',
     newCat: { name: '', colour: '#38bdf8', is_income: false, is_tax_relevant: false, exclude_from_spend: false },
     newBudget: { category_id: '', amount: '' },
     newBill: { name: '', amount: '', frequency: 'monthly', next_due: '', category_id: '' },
-    editModal: { open: false, txn: null, category_id: null, tax_category: '', tax_deductible: false, is_flagged: false, notes: '' },
+    editModal: { open: false, txn: null, category_id: null, tax_category: '', tax_deductible: false, is_flagged: false, is_reimbursable: false, notes: '' },
     addTxnModal: { open: false, date: '', description: '', amount: '', is_credit: false, account_id: null, category_id: null, tax_deductible: false, notes: '' },
     ac: { field: null, items: [] },
     payBillModal: { open: false, bill_id: null, name: '', expected: 0, amount: '', paid_date: '', notes: '' },
@@ -7940,6 +8547,17 @@ function app() {
 
     // Folder watcher
     folderWatchStatus: null,
+
+    // Car Log / Trips
+    trips: [],
+    tripSummary: null,
+    tripFY: new Date().getMonth() >= 6 ? new Date().getFullYear() + 1 : new Date().getFullYear(),
+    tripFormShow: false,
+    tripEditId: null,
+    tripForm: { date: new Date().toISOString().split('T')[0], purpose: 'work', description: '', start_location: '', end_location: '', km: '', toll: '', notes: '' },
+    tripSaving: false,
+    tripsLoading: false,
+    tripGeoLoading: { start: false, end: false },
 
     // Receipts
     receiptUploading: false,
@@ -8009,6 +8627,21 @@ function app() {
     pulseBriefing: null,
     pulseLoading: false,
     pulseBriefingLoading: false,
+
+    // Financial Advisor
+    advisorReport: null,
+    advisorGeneratedAt: null,
+    advisorLoading: false,
+    advisorError: '',
+    advisorSessionId: null,
+    advisorUserContext: '',
+    advisorShowContext: false,
+    advisorChat: [],
+    advisorChatInput: '',
+    advisorChatLoading: false,
+    advisorHistory: [],
+    advisorShowHistory: false,
+    advisorHistorySession: null,
 
     // Basiq
     basiqStatus: { configured: false, connected: false, user_id: null, last_sync: null, last_sync_count: null },
@@ -8338,6 +8971,32 @@ function app() {
     // ── Sparkline helper ──
     // data: array of {v: Number, label: String}
     // Returns an SVG string for use with x-html inside position:relative container
+    renderAdvisorMarkdown(text) {
+      if (!text) return '';
+      // Convert markdown to HTML: headers, bold, bullet lists, numbered lists, paragraphs
+      let html = text
+        // Escape HTML entities first
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        // H2 headers (## Heading)
+        .replace(/^## (.+)$/gm, '<h2 style="font-size:17px;font-weight:700;margin:24px 0 10px;padding-bottom:6px;border-bottom:1px solid var(--border);color:var(--text);">$1</h2>')
+        // H3 headers (### Heading)
+        .replace(/^### (.+)$/gm, '<h3 style="font-size:15px;font-weight:600;margin:18px 0 8px;color:var(--text);">$1</h3>')
+        // Bold (**text**)
+        .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+        // Italic (*text*)
+        .replace(/\*([^*\n]+?)\*/g, '<em>$1</em>')
+        // Numbered list items (1. text)
+        .replace(/^(\d+)\. (.+)$/gm, '<div style="display:flex;gap:10px;margin:6px 0;"><span style="font-weight:600;color:var(--primary);min-width:20px;">$1.</span><span>$2</span></div>')
+        // Bullet list items (- text or * text)
+        .replace(/^[•\-\*] (.+)$/gm, '<div style="display:flex;gap:8px;margin:4px 0;padding-left:8px;"><span style="color:var(--primary);margin-top:2px;">▸</span><span>$1</span></div>')
+        // Horizontal rules (---)
+        .replace(/^---+$/gm, '<hr style="border:none;border-top:1px solid var(--border);margin:16px 0;">')
+        // Double newlines = paragraph break
+        .replace(/\n\n/g, '</p><p style="margin:8px 0;">')
+        // Single newlines
+        .replace(/\n/g, '<br>');
+      return '<p style="margin:0;">' + html + '</p>';
+    },
     sparklineSvg(data, color) {
       color = color || '#38bdf8';
       if (!data || data.length < 1) return '';
@@ -9032,11 +9691,39 @@ function app() {
             }) });
             this.wizardGoalAdded = true;
           }
+        } else if (step.id === 'loans') {
+          if (this.wizardData.loanName.trim() && this.wizardData.loanOutstanding && this.wizardData.loanRate) {
+            const termMonths = this.wizardData.loanType === 'mortgage' ? 360 : 60;
+            await this.api('/api/loans', { method: 'POST', body: JSON.stringify({
+              name: this.wizardData.loanName.trim(),
+              loan_type: this.wizardData.loanType,
+              principal_cents: Math.round(parseFloat(this.wizardData.loanOutstanding || 0) * 100),
+              outstanding_cents: Math.round(parseFloat(this.wizardData.loanOutstanding || 0) * 100),
+              interest_rate: parseFloat(this.wizardData.loanRate || 0),
+              start_date: new Date().toISOString().split('T')[0],
+              term_months: termMonths,
+              monthly_repayment_cents: Math.round(parseFloat(this.wizardData.loanRepayment || 0) * 100),
+              offset_cents: Math.round(parseFloat(this.wizardData.loanOffset || 0) * 100),
+            }) });
+            this.wizardLoanAdded = true;
+            await this.loadLoans();
+          }
         } else if (step.id === 'ai') {
           if (this.wizardData.apiKey.trim()) {
             this.anthropicKeyInput = this.wizardData.apiKey.trim();
             await this.saveSettings();
             this.wizardData.apiKey = '';
+          }
+          // Save AI feature toggles
+          const toggles = {
+            ai_categorise_enabled: this.wizardData.aiCategorise ? '1' : '0',
+            ai_ocr_enabled:        this.wizardData.aiOcr        ? '1' : '0',
+            ai_gmail_enabled:      this.wizardData.aiGmail      ? '1' : '0',
+            ai_payslip_enabled:    this.wizardData.aiPayslip    ? '1' : '0',
+            ai_newsletter_enabled: this.wizardData.aiNewsletter ? '1' : '0',
+          };
+          for (const [key, value] of Object.entries(toggles)) {
+            await this.api('/api/settings', { method: 'POST', body: JSON.stringify({ key, value }) });
           }
         } else if (step.id === 'notify') {
           if (this.wizardData.notifyTarget.trim()) {
@@ -9177,19 +9864,22 @@ function app() {
         if (p === 'goals') { this.loadGoals(); this.loadScore(); this.loadAchievements(); this.loadStreaks(); this.loadChallenges(); this.loadSavingsRate(); }
         if (p === 'networth') this.loadNetWorth();
         if (p === 'super') this.loadSuper();
-        if (p === 'import') { this.loadAccounts(); this.loadFolderWatchStatus(); this.loadBasiqStatus(); }
+        if (p === 'import') { this.loadAccounts(); this.loadFolderWatchStatus(); this.loadBasiqStatus(); if (!this.loans.length) this.loadLoans(); }
         if (p === 'sortswipe') this.loadSortSwipe();
-        if (p === 'tax') { this.loadTaxSummary(); this.loadTaxEstimate(); this.loadCgtSummary(); this.loadDividendSummary(); this.loadAtoPrefill(); this.loadReimbSummary(); }
+        if (p === 'tax') { this.loadTaxSummary(); this.loadTaxEstimate(); this.loadCgtSummary(); this.loadDividendSummary(); this.loadAtoPrefill(); this.loadReimbSummary(); this.loadReimbMatch(); }
         if (p === 'settings') { this.loadMcpKey(); this.loadPayslipWatchStatus(); this.loadDataSources(); this.loadChangelog(); }
         if (p === 'reports') this.loadReport();
         if (p === 'pulse') this.loadPulse();
+        if (p === 'advisor') this.loadAdvisorReport();
         if (p === 'chathistory') this.loadChatConversations();
+        if (p === 'trips') { this.loadTrips(); this.loadTripSummary(); }
+        if (p === 'tax') this.loadTripSummary();
       });
 
       // Hash routing: navigate to page from URL on load (supports email deep links)
       const VALID_PAGES = ['dashboard','transactions','merchants','import','categories',
         'budgets','tax','bills','flags','insights','payslips','crypto','investments',
-        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet','reports'];
+        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet','reports','advisor','loans','calendar'];
       const hash = window.location.hash.slice(1);
       if (hash && VALID_PAGES.includes(hash)) {
         this.page = hash;
@@ -9478,9 +10168,11 @@ function app() {
           }),
         });
         if (!data.ok) throw new Error(data.detail || 'Attach failed');
-        this.ocrAttachResult = data.created
-          ? `New transaction created and receipt attached (ID ${data.txn_id})`
-          : `Receipt attached to transaction #${data.txn_id}`;
+        const msg = data.created
+          ? `New transaction created and receipt attached`
+          : `Receipt attached to transaction`;
+        this.showToast(msg);
+        this.ocrAttachResult = msg;
         this.ocrResult = null;
         this.ocrFile = null;
         this.loadTransactions();
@@ -9603,10 +10295,16 @@ function app() {
       this.loansLoading = true;
       try {
         this.loans = await this.api('/api/loans') || [];
-        // Pre-seed input keys so Alpine.js x-model reactivity works on existing keys
-        const inputs = {};
-        this.loans.forEach(l => { inputs[l.id] = this.loanExtraInput[l.id] || ''; });
+        // Pre-seed input/result/loading keys so Alpine.js reactivity works on all loan IDs
+        const inputs = {}, results = {}, loading = {};
+        this.loans.forEach(l => {
+          inputs[l.id] = this.loanExtraInput[l.id] || '';
+          results[l.id] = this.loanExtraResult[l.id] || null;
+          loading[l.id] = false;
+        });
         this.loanExtraInput = inputs;
+        this.loanExtraResult = results;
+        this.loanExtraLoading = loading;
         // Load payment history for each loan
         await Promise.all(this.loans.map(l => this.loadLoanPayments(l.id)));
       } finally {
@@ -9733,12 +10431,12 @@ function app() {
     async calcLoanExtra(id) {
       const extra = parseInt(this.loanExtraInput[id] || 0);
       if (!extra || extra <= 0) { this.showToast('Enter an extra repayment amount'); return; }
-      this.loanExtraLoading = { ...this.loanExtraLoading, [id]: true };
+      this.loanExtraLoading[id] = true;
       try {
         const data = await this.api(`/api/loans/${id}/extra-repayment?extra_cents=${extra * 100}`);
-        this.loanExtraResult = { ...this.loanExtraResult, [id]: data };
+        this.loanExtraResult[id] = data;
       } finally {
-        this.loanExtraLoading = { ...this.loanExtraLoading, [id]: false };
+        this.loanExtraLoading[id] = false;
       }
     },
     async loadAtoPrefill() {
@@ -9790,6 +10488,35 @@ function app() {
       this.showToast('Marked as received!');
       this.loadReimbSummary();
     },
+    async markAllReimbReceived() {
+      const pending = this.reimbSummary?.pending || [];
+      if (!pending.length) return;
+      await Promise.all(pending.map(t =>
+        this.api(`/api/transactions/${t.id}`, { method: 'PATCH',
+          body: JSON.stringify({ reimbursement_received: true }) })
+      ));
+      this.showToast(`${pending.length} expense${pending.length !== 1 ? 's' : ''} marked as reimbursed`);
+      this.loadReimbSummary();
+      this.loadReimbMatch();
+    },
+    async loadReimbMatch() {
+      try { this.reimbMatch = await this.api('/api/transactions/reimbursement-match'); }
+      catch { this.reimbMatch = null; }
+    },
+    dismissReimbMatch(txnId) {
+      try {
+        const dismissed = JSON.parse(localStorage.getItem('dismissedReimbMatches') || '[]');
+        if (!dismissed.includes(txnId)) dismissed.push(txnId);
+        localStorage.setItem('dismissedReimbMatches', JSON.stringify(dismissed));
+      } catch {}
+      if (this.reimbMatch) {
+        this.reimbMatch = { ...this.reimbMatch, matches: this.reimbMatch.matches.filter(m => m.txn_id !== txnId) };
+      }
+    },
+    async approveReimbMatch() {
+      await this.markAllReimbReceived();
+      this.reimbMatch = null;
+    },
     async loadFySummary() {
       try { this.fySummary = await this.api(`/api/tax/fy-summary?fy=${this.taxFY}`); }
       catch(e) { this.showToast('Could not load FY summary: ' + e.message, true); }
@@ -9836,6 +10563,149 @@ function app() {
       } catch(e) { this.pulseBriefing = { error: 'Failed to load briefing.' }; }
       finally { this.pulseBriefingLoading = false; }
     },
+    async loadAdvisorReport() {
+      try {
+        const d = await this.api('/api/advisor/report');
+        this.advisorReport = d.report;
+        this.advisorGeneratedAt = d.generated_at;
+        this.advisorSessionId = d.session_id || null;
+        this.advisorChat = d.chat_messages || [];
+        if (d.user_context) this.advisorUserContext = d.user_context;
+      } catch(e) { this.advisorError = 'Failed to load report.'; }
+    },
+    async generateAdvisorReport() {
+      this.advisorLoading = true;
+      this.advisorError = '';
+      this.advisorChat = [];
+      try {
+        const d = await this.api('/api/advisor/generate', {
+          method: 'POST',
+          body: JSON.stringify({ user_context: this.advisorUserContext || null }),
+        });
+        this.advisorReport = d.report;
+        this.advisorGeneratedAt = d.generated_at;
+        this.advisorSessionId = d.session_id || null;
+        this.advisorChat = d.chat_messages || [];
+        this.advisorShowHistory = false;
+        this.advisorHistorySession = null;
+      } catch(e) { this.advisorError = e.message || 'Failed to generate report.'; }
+      finally { this.advisorLoading = false; }
+    },
+
+    async sendAdvisorChat() {
+      const q = this.advisorChatInput.trim();
+      if (!q || this.advisorChatLoading) return;
+      this.advisorChatLoading = true;
+      this.advisorChatInput = '';
+      // Optimistically add user message
+      this.advisorChat.push({ role: 'user', content: q, ts: new Date().toISOString() });
+      try {
+        const d = await this.api('/api/advisor/chat', {
+          method: 'POST',
+          body: JSON.stringify({ question: q, session_id: this.advisorSessionId }),
+        });
+        this.advisorChat = d.chat_messages || this.advisorChat;
+      } catch(e) {
+        this.advisorChat.push({ role: 'assistant', content: 'Error: ' + (e.message || 'Failed to get answer.'), ts: new Date().toISOString() });
+      } finally {
+        this.advisorChatLoading = false;
+        this.$nextTick(() => {
+          const el = document.getElementById('advisor-chat-bottom');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        });
+      }
+    },
+
+    async loadAdvisorHistory() {
+      try {
+        this.advisorHistory = await this.api('/api/advisor/history') || [];
+      } catch(e) { console.error('Failed to load advisor history', e); }
+    },
+
+    async openAdvisorHistorySession(id) {
+      try {
+        this.advisorHistorySession = await this.api(`/api/advisor/history/${id}`);
+      } catch(e) { console.error('Failed to load history session', e); }
+    },
+
+    // ── Car Log / Trips ───────────────────────────────────────────────────
+    async loadTrips() {
+      this.tripsLoading = true;
+      try { this.trips = await this.api(`/api/trips?fy=${this.tripFY}`) || []; }
+      finally { this.tripsLoading = false; }
+    },
+    async loadTripSummary() {
+      const fy = this.page === 'tax' ? this.taxFY : this.tripFY;
+      this.tripSummary = await this.api(`/api/trips/summary?fy=${fy}`);
+    },
+    resetTripForm() {
+      this.tripEditId = null;
+      this.tripForm = { date: new Date().toISOString().split('T')[0], purpose: 'work', description: '', start_location: '', end_location: '', km: '', toll: '', notes: '' };
+    },
+    editTrip(trip) {
+      this.tripEditId = trip.id;
+      this.tripForm = {
+        date: trip.date, purpose: trip.purpose,
+        description: trip.description || '', start_location: trip.start_location || '',
+        end_location: trip.end_location || '', km: trip.km,
+        toll: trip.toll_cents ? (trip.toll_cents / 100).toFixed(2) : '', notes: trip.notes || '',
+      };
+      this.tripFormShow = true;
+      this.$nextTick(() => document.getElementById('trip-form-top')?.scrollIntoView({ behavior: 'smooth' }));
+    },
+    async saveTrip() {
+      if (!this.tripForm.km || !this.tripForm.date) return;
+      this.tripSaving = true;
+      try {
+        const body = {
+          date: this.tripForm.date, purpose: this.tripForm.purpose,
+          description: this.tripForm.description || null,
+          start_location: this.tripForm.start_location || null,
+          end_location: this.tripForm.end_location || null,
+          km: parseFloat(this.tripForm.km) || 0,
+          toll_cents: Math.round(parseFloat(this.tripForm.toll || 0) * 100),
+          notes: this.tripForm.notes || null,
+        };
+        if (this.tripEditId) {
+          await this.api(`/api/trips/${this.tripEditId}`, { method: 'PATCH', body: JSON.stringify(body) });
+        } else {
+          await this.api('/api/trips', { method: 'POST', body: JSON.stringify(body) });
+        }
+        this.tripFormShow = false;
+        this.tripEditId = null;
+        this.showToast(this.tripEditId ? 'Trip updated' : 'Trip added');
+        await this.loadTrips();
+        await this.loadTripSummary();
+      } finally { this.tripSaving = false; }
+    },
+    async deleteTrip(id) {
+      if (!confirm('Delete this trip?')) return;
+      await this.api(`/api/trips/${id}`, { method: 'DELETE' });
+      this.showToast('Trip deleted');
+      await this.loadTrips();
+      await this.loadTripSummary();
+    },
+    async getLocation(field) {
+      if (!navigator.geolocation) { this.showToast('Geolocation not supported on this device'); return; }
+      this.tripGeoLoading = { ...this.tripGeoLoading, [field]: true };
+      navigator.geolocation.getCurrentPosition(async (pos) => {
+        try {
+          const { latitude: lat, longitude: lon } = pos.coords;
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=16`, { headers: { 'User-Agent': 'FinanceTracker/1.0' } });
+          const d = await res.json();
+          const a = d.address || {};
+          const parts = [a.road, a.suburb || a.town || a.city, a.state].filter(Boolean);
+          const loc = parts.join(', ') || d.display_name?.split(',').slice(0,3).join(',').trim() || `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+          if (field === 'start') this.tripForm.start_location = loc;
+          else this.tripForm.end_location = loc;
+        } catch(e) { this.showToast('Could not get location name'); }
+        finally { this.tripGeoLoading = { ...this.tripGeoLoading, [field]: false }; }
+      }, () => {
+        this.tripGeoLoading = { ...this.tripGeoLoading, [field]: false };
+        this.showToast('Location access denied — allow location in browser/app settings');
+      });
+    },
+
     async checkAbsUpdates() {
       this.absChecking = true;
       this.absCheckResult = null;
@@ -9864,11 +10734,33 @@ function app() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Import failed');
         this.importResult = `Imported ${data.imported} transactions, skipped ${data.skipped} duplicates.`;
-        if (data.errors?.length) {
-          this.importResult += ` ${data.errors.length} errors.`;
-        }
+        if (data.errors?.length) this.importResult += ` ${data.errors.length} errors.`;
+        if (data.loan_balance_updated) this.importResult += ` Loan balance updated.`;
+        if (data.loan_payments_synced > 0) this.importResult += ` ${data.loan_payments_synced} loan payment(s) recorded.`;
+        if (data.offset_loan_updated) this.importResult += ` Offset balance synced to loan.`;
         this.loadDashboard();
+        if (data.loan_balance_updated || data.loan_payments_synced > 0 || data.offset_loan_updated) this.loadLoans();
       } catch (e) { this.importError = e.message; }
+    },
+    async linkAccountToLoan(accountId, loanId) {
+      const p = new URLSearchParams(loanId ? { linked_loan_id: loanId } : { clear_linked_loan: 'true' });
+      await this.api(`/api/import/accounts/${accountId}?${p}`, { method: 'PATCH' });
+      await this.loadAccounts();
+      this.showToast(loanId ? 'Account linked to loan' : 'Loan link removed');
+    },
+    async linkAccountAsOffset(accountId, loanId) {
+      const p = new URLSearchParams(loanId ? { offset_loan_id: loanId } : { clear_offset_loan: 'true' });
+      await this.api(`/api/import/accounts/${accountId}?${p}`, { method: 'PATCH' });
+      await this.loadAccounts();
+      this.showToast(loanId ? 'Account set as offset for loan' : 'Offset link removed');
+    },
+    async saveAccountName(accountId) {
+      if (!this.accountEditName.trim()) return;
+      const p = new URLSearchParams({ name: this.accountEditName.trim() });
+      await this.api(`/api/import/accounts/${accountId}?${p}`, { method: 'PATCH' });
+      this.accountEditId = null;
+      await this.loadAccounts();
+      this.showToast('Account name updated');
     },
     async addAccount() {
       if (!this.newAccount.name) return;
@@ -10775,16 +11667,17 @@ function app() {
         tax_category: t.tax_category || '',
         tax_deductible: t.tax_deductible || false,
         is_flagged: t.is_flagged || false,
+        is_reimbursable: t.is_reimbursable || false,
         notes: t.notes || '',
       };
     },
     async saveEditTxn() {
-      const { txn, category_id, tax_category, tax_deductible, is_flagged, notes } = this.editModal;
+      const { txn, category_id, tax_category, tax_deductible, is_flagged, is_reimbursable, notes } = this.editModal;
       await this.api(`/api/transactions/${txn.id}`, { method: 'PATCH',
         body: JSON.stringify({
           category_id: category_id ? parseInt(category_id) : null,
           tax_category: tax_category || null,
-          tax_deductible, is_flagged,
+          tax_deductible, is_flagged, is_reimbursable,
           notes: notes || null,
         }) });
       this.editModal.open = false;

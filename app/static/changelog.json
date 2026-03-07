@@ -1,5 +1,48 @@
 [
   {
+    "date": "2026-03-07",
+    "version": "v56",
+    "title": "Car Log + OCR Fixes",
+    "changes": [
+      "Car Log page: new page for recording work-related travel — date, purpose, distance, start/end locations, tolls, notes; feeds into Tax page deduction summary",
+      "Car Log: GPS geolocation button fills start or end location via device GPS + OpenStreetMap reverse geocoding",
+      "Car Log: FY selector — view and track trips per financial year; ATO cents per km rate displayed (88¢/km for FY 2024-25)",
+      "Car Log: per-trip ATO deduction estimate shown inline; FY summary shows total km, deduction, and toll deduction",
+      "Tax page: Work Travel card now shows work km, ATO deduction, tolls, and total deduction when trips are logged",
+      "OCR: fixed double AUD field — when foreign currency is detected, the original amount field is now labelled by its currency and shown as read-only; only the AUD equivalent field is editable",
+      "OCR: fixed no save confirmation — a toast notification now appears immediately after a receipt is saved or a transaction created"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "version": "v55",
+    "title": "Advisor Chat & History + Setup Wizard Loans & AI Toggles",
+    "changes": [
+      "Financial Advisor: user context/notes textarea — describe your data quirks (transfers, employers) so the AI interprets them correctly",
+      "Financial Advisor: follow-up Q&A chat — ask questions about the advice directly below the report; answers are saved with the session",
+      "Financial Advisor: report history — view all past reports with their Q&A threads via the History button",
+      "Setup wizard: new Loans step — add mortgage or other loans during initial setup (name, type, balance, rate, repayment, offset)",
+      "Setup wizard: AI feature toggles added to the AI step — individually enable/disable OCR, auto-categorise, Gmail import, payslip extraction, and weekly newsletter",
+      "Setup wizard: Back/Skip buttons now use dynamic step count (supports any number of steps)",
+      "Changelog now surfaced in app — accessible from Settings page"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "version": "v52",
+    "title": "Financial Advisor + Offset Account Sync + Account Management",
+    "changes": [
+      "New Financial Advisor page: AI-powered personalised recommendations covering mortgage, spending, savings, and investments using Australian market context",
+      "Loans: offset account syncing — link any account as the offset account for a loan; CSV imports auto-update loan.offset_cents from account balance",
+      "Import > Manage Accounts: inline name editing (Edit/Save buttons per account)",
+      "Import > Manage Accounts: dual selectors — 'Repayment sync' (existing) and new 'Offset account for' per account",
+      "OCR: foreign currency auto-conversion using frankfurter.app free API — AUD equivalent pre-filled at scan time",
+      "Loans: loan payment history + Record Payment form; yearly/monthly amortisation table toggle",
+      "Loans: Extra Repayment Simulator labelled as simulation only",
+      "start.sh: fixed server startup reliability using nohup + correct working directory"
+    ]
+  },
+  {
     "date": "2026-03-06",
     "version": "v47",
     "title": "Calendar Heatmap + Loans Tracker + ATO Pre-Fill + AI Toggles",

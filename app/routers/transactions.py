@@ -10,7 +10,8 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select, func
 from pydantic import BaseModel
 
-from database import Transaction, Category, Account, Bill, MerchantEnrichment, get_session, User
+from datetime import timedelta
+from database import Transaction, Category, Account, Bill, MerchantEnrichment, Payslip, get_session, User
 from deps import get_setting, get_current_user
 
 router = APIRouter(prefix="/api/transactions", tags=["transactions"])
@@ -493,6 +494,75 @@ def reimbursable_summary(
         "received_total": round(sum(r["amount"] for r in received), 2),
         "pending": pending,
         "received": received,
+    }
+
+
+@router.get("/reimbursement-match")
+def reimbursement_match(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Find credit transactions that look like employer reimbursement payments."""
+    # Get pending reimbursable total
+    pending_txns = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.is_reimbursable == True,
+            Transaction.reimbursement_received == False,
+        )
+    ).all()
+    if not pending_txns:
+        return {"matches": [], "pending_total": 0.0, "pending_count": 0}
+
+    pending_total = sum(float(t.amount) for t in pending_txns)
+
+    # Employer names from payslips (for confidence scoring)
+    payslips = session.exec(
+        select(Payslip).where(Payslip.user_id == current_user.id)
+    ).all()
+    employer_names = list({
+        p.employer.lower().strip()
+        for p in payslips if p.employer and len(p.employer) > 2
+    })
+
+    # Recent credit transactions (last 90 days), not already flagged as reimbursable
+    cutoff = date.today() - timedelta(days=90)
+    credits = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.is_credit == True,
+            Transaction.date >= cutoff,
+            Transaction.is_reimbursable == False,
+        ).order_by(Transaction.date.desc())
+    ).all()
+
+    matches = []
+    for c in credits:
+        amount = float(c.amount)
+        if pending_total <= 0:
+            continue
+        diff_pct = abs(amount - pending_total) / pending_total
+        if diff_pct > 0.20:  # within 20%
+            continue
+        desc_lower = (c.description or "").lower()
+        employer_hit = any(emp in desc_lower for emp in employer_names)
+        # Boost confidence: exact match = high, employer name match = medium
+        confidence = "high" if diff_pct <= 0.02 else ("medium" if diff_pct <= 0.10 or employer_hit else "low")
+        matches.append({
+            "txn_id": c.id,
+            "date": str(c.date),
+            "description": c.description,
+            "amount": amount,
+            "diff_pct": round(diff_pct * 100, 1),
+            "employer_match": employer_hit,
+            "confidence": confidence,
+        })
+
+    matches.sort(key=lambda x: x["diff_pct"])
+    return {
+        "pending_total": round(pending_total, 2),
+        "pending_count": len(pending_txns),
+        "matches": matches,
     }
 
 

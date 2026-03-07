@@ -394,25 +394,30 @@ async def ocr_attach(
 
 
 def _fx_to_aud(currency: str, amount: float, receipt_date: date) -> float | None:
-    """Convert amount in foreign currency to AUD using frankfurter.app (free, no key)."""
+    """Convert amount in foreign currency to AUD using open.er-api.com (free, no key required)."""
     if currency == "AUD" or amount <= 0:
         return amount
-    import urllib.request, urllib.error
+    import urllib.request
+    cur = currency.upper()
+    # Primary: open.er-api.com — returns latest rates for any base currency
     try:
-        date_str = receipt_date.isoformat()
-        url = f"https://api.frankfurter.app/{date_str}?from={currency}&to=AUD&amount={amount}"
-        with urllib.request.urlopen(url, timeout=5) as resp:
+        url = f"https://open.er-api.com/v6/latest/{cur}"
+        with urllib.request.urlopen(url, timeout=6) as resp:
             data = json.loads(resp.read())
-            return round(float(data["rates"]["AUD"]), 2)
+            rate = float(data["rates"]["AUD"])
+            return round(amount * rate, 2)
     except Exception:
-        # Try latest rate as fallback
-        try:
-            url = f"https://api.frankfurter.app/latest?from={currency}&to=AUD&amount={amount}"
-            with urllib.request.urlopen(url, timeout=5) as resp:
-                data = json.loads(resp.read())
-                return round(float(data["rates"]["AUD"]), 2)
-        except Exception:
-            return None
+        pass
+    # Fallback: cdn.jsdelivr fawazahmed0 currency API (no key, updated daily)
+    try:
+        cur_lower = cur.lower()
+        url = f"https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/{cur_lower}.json"
+        with urllib.request.urlopen(url, timeout=6) as resp:
+            data = json.loads(resp.read())
+            rate = float(data[cur_lower]["aud"])
+            return round(amount * rate, 2)
+    except Exception:
+        return None
 
 
 def _ocr_with_ai(content: bytes, mime_type: str, provider: str, api_key: str) -> dict:

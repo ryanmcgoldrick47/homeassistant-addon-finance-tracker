@@ -45,6 +45,8 @@ class Account(SQLModel, table=True):
     name:         str
     bank:         str = "Macquarie"
     account_number: str = ""
+    linked_loan_id: Optional[int] = None   # if set, CSV imports sync loan balance + payments
+    offset_loan_id: Optional[int] = None   # if set, CSV imports sync this account balance → loan.offset_cents
     user_id:      int = Field(default=1)
 
 
@@ -397,6 +399,30 @@ class LoanPayment(SQLModel, table=True):
     interest_cents:  int = 0                  # portion that is interest
     notes:        Optional[str] = None        # e.g. "extra repayment", "refinance"
     user_id:      int = 1
+
+
+class Trip(SQLModel, table=True):
+    """Work-related travel log for ATO tax deduction purposes."""
+    id:             Optional[int] = Field(default=None, primary_key=True)
+    user_id:        int = Field(default=1)
+    date:           date
+    purpose:        str = "work"          # work | personal | medical | charity
+    description:    Optional[str] = None  # e.g. "Client meeting — Parramatta"
+    start_location: Optional[str] = None
+    end_location:   Optional[str] = None
+    km:             float = 0.0
+    toll_cents:     int = 0               # toll costs in cents
+    notes:          Optional[str] = None
+
+
+class AdvisorSession(SQLModel, table=True):
+    """Stores each AI financial advisor report and follow-up chat messages."""
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    user_id:       int = 1
+    created_at:    datetime = Field(default_factory=datetime.utcnow)
+    report_text:   str = ""
+    user_context:  Optional[str] = None      # user-provided notes/context
+    chat_messages: Optional[str] = None      # JSON: [{role, content, ts}, ...]
 
 
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlmodel import Session, select
 
-from database import Transaction, Account, Category, get_session, engine, User
+from database import Transaction, Account, Category, Loan, LoanPayment, get_session, engine, User
 from deps import get_current_user
 
 router = APIRouter(prefix="/api/import", tags=["import"])
@@ -151,6 +151,7 @@ _COL_ALIASES = {
     "credit": ["credit", "credits", "credit amount", "deposit", "deposits", "money in"],
     "debit": ["debit", "debits", "debit amount", "withdrawal", "withdrawals", "money out"],
     "amount": ["amount", "net amount", "transaction amount"],
+    "balance": ["balance", "running balance", "closing balance", "account balance"],
 }
 
 
@@ -194,6 +195,36 @@ def create_account(
     current_user: User = Depends(get_current_user),
 ):
     acc = Account(name=name, bank=bank, account_number=account_number, user_id=current_user.id)
+    session.add(acc)
+    session.commit()
+    session.refresh(acc)
+    return acc
+
+
+@router.patch("/accounts/{account_id}")
+def update_account(
+    account_id: int,
+    name: Optional[str] = None,
+    linked_loan_id: Optional[int] = None,
+    clear_linked_loan: bool = False,
+    offset_loan_id: Optional[int] = None,
+    clear_offset_loan: bool = False,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    acc = session.get(Account, account_id)
+    if not acc or acc.user_id != current_user.id:
+        raise HTTPException(404, "Account not found")
+    if name is not None:
+        acc.name = name.strip()
+    if linked_loan_id is not None:
+        acc.linked_loan_id = linked_loan_id
+    if clear_linked_loan:
+        acc.linked_loan_id = None
+    if offset_loan_id is not None:
+        acc.offset_loan_id = offset_loan_id
+    if clear_offset_loan:
+        acc.offset_loan_id = None
     session.add(acc)
     session.commit()
     session.refresh(acc)
@@ -274,6 +305,9 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
             "errors": [{"row": 0, "error": f"No date column found. Headers: {headers}"}],
         }
 
+    last_balance: float | None = None
+    loan_payment_rows: list[dict] = []   # (date, amount, description) for credit rows
+
     for i, row in enumerate(reader):
         try:
             row = {k.strip(): v.strip() for k, v in row.items() if k}
@@ -294,6 +328,19 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
                 amt_str = (row.get(amt_col, "0") if amt_col else "0").replace(",", "") or "0"
                 amount    = abs(float(amt_str))
                 is_credit = float(amt_str) > 0
+
+            # Track running balance for loan sync
+            bal_col = col.get("balance", "")
+            if bal_col:
+                bal_str = row.get(bal_col, "").replace(",", "").strip()
+                try:
+                    last_balance = abs(float(bal_str))
+                except (ValueError, TypeError):
+                    pass
+            # Track credit rows for loan payment recording
+            if is_credit and account.linked_loan_id:
+                loan_payment_rows.append({"date": date_val, "amount": amount, "description": description})
+
             raw_hash = _make_hash(date_val, description, amount)
             if session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first():
                 skipped += 1
@@ -328,7 +375,58 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
             errors.append({"row": i + 2, "error": str(e)})
 
     session.commit()
-    return {"imported": imported, "skipped": skipped, "errors": errors}
+
+    # ── Loan sync ──────────────────────────────────────────────────────────────
+    loan_payments_synced = 0
+    loan_balance_updated = False
+    if account.linked_loan_id:
+        loan = session.get(Loan, account.linked_loan_id)
+        if loan and loan.user_id == user_id:
+            # Update outstanding balance from last statement balance
+            if last_balance is not None:
+                loan.outstanding_cents = round(last_balance * 100)
+                session.add(loan)
+                loan_balance_updated = True
+            # Create LoanPayment records for credit rows (dedup by date+amount)
+            for pr in loan_payment_rows:
+                existing = session.exec(
+                    select(LoanPayment).where(
+                        LoanPayment.loan_id == loan.id,
+                        LoanPayment.payment_date == pr["date"],
+                        LoanPayment.amount_cents == round(pr["amount"] * 100),
+                        LoanPayment.user_id == user_id,
+                    )
+                ).first()
+                if not existing:
+                    session.add(LoanPayment(
+                        loan_id=loan.id,
+                        payment_date=pr["date"],
+                        amount_cents=round(pr["amount"] * 100),
+                        principal_cents=round(pr["amount"] * 100),  # treat full amount as principal
+                        notes=f"CSV import: {pr['description'][:80]}",
+                        user_id=user_id,
+                    ))
+                    loan_payments_synced += 1
+            session.commit()
+
+    # ── Offset account sync ─────────────────────────────────────────────────────
+    offset_loan_updated = False
+    if getattr(account, "offset_loan_id", None):
+        offset_loan = session.get(Loan, account.offset_loan_id)
+        if offset_loan and offset_loan.user_id == user_id and last_balance is not None:
+            offset_loan.offset_cents = round(last_balance * 100)
+            session.add(offset_loan)
+            session.commit()
+            offset_loan_updated = True
+
+    return {
+        "imported": imported,
+        "skipped": skipped,
+        "errors": errors,
+        "loan_payments_synced": loan_payments_synced,
+        "loan_balance_updated": loan_balance_updated,
+        "offset_loan_updated": offset_loan_updated,
+    }
 
 
 @router.post("/csv")

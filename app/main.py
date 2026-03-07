@@ -24,6 +24,8 @@ import routers.reports as reports
 import routers.data_export as data_export
 import routers.market_pulse as market_pulse
 import routers.loans as loans
+import routers.advisor as advisor
+import routers.trips as trips
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +752,8 @@ app.include_router(reports.router)
 app.include_router(data_export.router)
 app.include_router(market_pulse.router)
 app.include_router(loans.router)
+app.include_router(advisor.router)
+app.include_router(trips.router)
 
 # MCP server (Finance Tracker tools for Claude Code on desktop)
 try:
