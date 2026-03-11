@@ -8,7 +8,7 @@ import shutil
 from datetime import date, datetime, timedelta
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from sqlmodel import Session, select
 
 from database import Transaction, Account, Category, Loan, LoanPayment, get_session, engine, User
@@ -177,6 +177,63 @@ def _find_uncategorised_id(session: Session) -> Optional[int]:
     return cat.id if cat else None
 
 
+_GENERIC_WORDS = {"account", "bank", "the", "my", "of", "and", "transaction",
+                  "savings", "everyday", "macquarie", "commbank", "anz", "nab", "westpac"}
+
+
+@router.get("/detect-account")
+def detect_account(
+    account_hint: str = Query("", description="Value from the 'Account' column in the CSV"),
+    headers: str = Query("", description="Comma-separated CSV column headers"),
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Auto-detect which account a CSV belongs to based on column headers and account name hint."""
+    accounts = session.exec(select(Account).where(Account.user_id == current_user.id)).all()
+    if not accounts:
+        return {"account_id": None, "confidence": "none"}
+
+    hint = account_hint.strip()
+    hint_lower = hint.lower()
+    best_id: int | None = None
+    best_score = 0
+
+    for acc in accounts:
+        score = 0
+        name_lower = acc.name.lower().strip()
+
+        # Account number exact match — highest priority
+        if acc.account_number and acc.account_number.strip() and acc.account_number.strip() in hint:
+            score = 100
+        # Name is substring of hint or vice versa
+        elif name_lower and (name_lower in hint_lower or hint_lower in name_lower):
+            score = 85
+        else:
+            # Token overlap, excluding generic words
+            hint_tokens = set(hint_lower.split()) - _GENERIC_WORDS
+            name_tokens = set(name_lower.split()) - _GENERIC_WORDS
+            overlap = hint_tokens & name_tokens
+            score = len(overlap) * 30
+
+        if score > best_score:
+            best_score = score
+            best_id = acc.id
+
+    if best_id is None or best_score == 0:
+        # Return suggested name from the CSV hint so frontend can offer to create it
+        suggested = hint.title().strip() if hint else None
+        return {"account_id": None, "confidence": "none", "suggested_name": suggested}
+
+    acc = next((a for a in accounts if a.id == best_id), None)
+    confidence = "high" if best_score >= 60 else "low"
+    return {
+        "account_id": best_id,
+        "account_name": acc.name if acc else "",
+        "confidence": confidence,
+        "score": best_score,
+    }
+
+
 @router.get("/accounts")
 def list_accounts(
     session: Session = Depends(get_session),
@@ -189,7 +246,7 @@ def list_accounts(
 @router.post("/accounts")
 def create_account(
     name: str,
-    bank: str = "Macquarie",
+    bank: str = "",
     account_number: str = "",
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),

@@ -57,6 +57,55 @@ def _extract_pdf_text(file_bytes: bytes) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Date sanity check
+# ---------------------------------------------------------------------------
+
+def _sanitise_extracted_dates(data: dict) -> tuple[dict, str | None]:
+    """Auto-correct pay_date year if it doesn't match the period year.
+
+    Returns (corrected_data, warning_message_or_None).
+    The most common AI error: period is 2025-03-18..2025-03-24 but pay_date
+    is extracted as 2026-03-26 (using current year instead of document year).
+    """
+    warning = None
+    try:
+        pay_date_str = data.get("pay_date")
+        ps_str = data.get("period_start")
+        pe_str = data.get("period_end")
+        if not pay_date_str or not ps_str or not pe_str:
+            return data, warning
+
+        pay_year = int(pay_date_str[:4])
+        ps_year  = int(ps_str[:4])
+        pe_year  = int(pe_str[:4])
+
+        # If period spans a year boundary (e.g. Dec–Jan), allow pay_date in either adjacent year
+        if ps_year != pe_year:
+            return data, warning
+
+        # Period is fully within one year — pay_date should match
+        period_year = ps_year
+        if pay_year != period_year:
+            # Allow at most +1 year if period ends in December (pay arrives in Jan)
+            pe_month = int(pe_str[5:7])
+            pay_month = int(pay_date_str[5:7])
+            if pay_year == period_year + 1 and pe_month == 12 and pay_month == 1:
+                return data, warning  # legitimate year-end lag
+
+            # Otherwise auto-correct: replace pay_date year with period year
+            corrected = pay_date_str.replace(str(pay_year), str(period_year), 1)
+            warning = (
+                f"AI extracted pay_date year as {pay_year} but period is in {period_year} — "
+                f"auto-corrected {pay_date_str} → {corrected}"
+            )
+            data = dict(data)
+            data["pay_date"] = corrected
+    except Exception:
+        pass
+    return data, warning
+
+
+# ---------------------------------------------------------------------------
 # AI extraction
 # ---------------------------------------------------------------------------
 
@@ -85,6 +134,12 @@ Extract all available fields and return ONLY a valid JSON object with this struc
   "allowances": [{{"name": "Car allowance", "amount": 150.00}}],
   "deductions": [{{"name": "Union fees", "amount": 12.50}}]
 }}
+
+CRITICAL DATE RULES — read carefully:
+- Use ONLY the dates as explicitly printed on the payslip. Never infer or assume the year.
+- The pay_date year MUST match the year shown on the payslip. If the payslip period is in 2025, the pay_date must also be 2025 (not 2026).
+- A payslip paid within 1–2 weeks of its period end date. If period_end is 2025-03-24, pay_date should be around 2025-03-26 — NOT 2026-03-26.
+- If you are unsure of the year for pay_date, use the same year as period_end.
 
 All dollar amounts as floats (not strings). Dates as YYYY-MM-DD strings.
 
@@ -329,6 +384,7 @@ async def upload_payslip(
         raise HTTPException(400, "Could not extract readable text from this PDF. It may be a scanned/image PDF.")
 
     data = await _call_ai_extraction(text, session)
+    data, date_warning = _sanitise_extracted_dates(data)
 
     # Parse pay_date
     pay_date_str = data.get("pay_date")
@@ -397,12 +453,15 @@ async def upload_payslip(
 
     _save_pdf(payslip.id, file_bytes)
 
-    return {
+    resp = {
         **_payslip_dict(payslip),
         "flags": flags,
         "allowances": data.get("allowances") or [],
         "deductions": data.get("deductions") or [],
     }
+    if date_warning:
+        resp["date_warning"] = date_warning
+    return resp
 
 
 @router.post("/bulk")
@@ -438,6 +497,7 @@ async def bulk_upload_payslips(
                 continue
 
             data = await _call_ai_extraction(text, session)
+            data, date_warn = _sanitise_extracted_dates(data)
 
             pay_date_str = data.get("pay_date")
             if not pay_date_str:
@@ -453,6 +513,9 @@ async def bulk_upload_payslips(
                 result["detail"] = f"Invalid pay date: {pay_date_str}"
                 results.append(result)
                 continue
+
+            if date_warn:
+                result["date_warning"] = date_warn
 
             employer = data.get("employer") or ""
             existing = session.exec(
@@ -693,12 +756,14 @@ def create_pdf_view_link(
 @router.get("/open/{view_id}")
 def open_pdf_by_view_token(view_id: str):
     """Serve PDF using a short-lived path-based view token (no auth header needed)."""
-    entry = _pdf_view_tokens.pop(view_id, None)
+    entry = _pdf_view_tokens.get(view_id)
     if not entry:
         raise HTTPException(404, "Link expired or not found — click View PDF again")
     payslip_id, _user_id, expires = entry
     if _dt.now() > expires:
+        _pdf_view_tokens.pop(view_id, None)
         raise HTTPException(404, "Link expired — click View PDF again")
+    # Keep token alive until expiry (single-tab navigation may make HEAD + GET)
     path = _pdf_path(payslip_id)
     if not os.path.exists(path):
         raise HTTPException(404, "PDF file not available")

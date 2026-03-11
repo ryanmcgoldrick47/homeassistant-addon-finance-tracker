@@ -26,6 +26,9 @@ import routers.market_pulse as market_pulse
 import routers.loans as loans
 import routers.advisor as advisor
 import routers.trips as trips
+import routers.property as property_tracker
+import routers.security as security
+import routers.paper_trading as paper_trading
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +411,8 @@ def _apply_demo_mask(path: str, data):
                 for f in ("total_cash", "total_franking", "total_grossed_up"):
                     if data.get(f) is not None:
                         data[f] = mask_amount(data[f] or 50, f"div_sum_{f}")
-                for ticker_key, v in list(data.get("by_ticker", {}).items()):
+                by_ticker = data.get("by_ticker", {})
+                for ticker_key, v in list(by_ticker.items() if isinstance(by_ticker, dict) else []):
                     fake_t = mask_ticker(ticker_key)
                     for f in ("cash", "franking", "grossed_up"):
                         if v.get(f) is not None:
@@ -560,7 +564,7 @@ async def _send_newsletter_now(session: Session):
     if not gmail_address or not gmail_password or not newsletter_email:
         return
 
-    data     = _gather(session)
+    data     = _gather(session, 1)  # default user_id=1 for background task
     insights = await _generate_insights(data, api_key) if api_key else ""
     html     = _build_html(data, app_url, insights)
 
@@ -644,6 +648,67 @@ async def _gmail_scan_loop():
         await asyncio.sleep(3600)  # check every hour
 
 
+async def _paper_trading_loop():
+    """Background task: auto-run AI trader analysis weekly."""
+    await asyncio.sleep(600)  # wait 10 min after startup
+    while True:
+        try:
+            with Session(engine) as session:
+                from deps import get_setting
+                if get_setting(session, "paper_auto_trade_enabled") != "1":
+                    await asyncio.sleep(3600)
+                    continue
+                last_analysis = get_setting(session, "paper_last_analysis", "")
+                run_now = True
+                if last_analysis:
+                    try:
+                        from datetime import datetime as _dt
+                        last_dt = _dt.fromisoformat(last_analysis)
+                        if (_dt.now() - last_dt).total_seconds() < 7 * 24 * 3600:
+                            run_now = False
+                    except ValueError:
+                        pass
+                if run_now:
+                    # Check portfolio exists
+                    from database import PaperPortfolio
+                    from sqlmodel import select as _select
+                    p = session.exec(_select(PaperPortfolio)).first()
+                    if p:
+                        from routers.paper_trading import _run_analysis
+                        result = await _run_analysis(session, p.user_id)
+                        # Notify via HA
+                        try:
+                            from routers.notify import _send_notification, _get_notify_config
+                            ha_url, ha_tok, targets = _get_notify_config(session)
+                            if ha_tok and targets:
+                                n = result.get("trades_executed", 0)
+                                ret = result.get("portfolio", {}).get("return_pct", 0)
+                                sign = "+" if ret >= 0 else ""
+                                await _send_notification(
+                                    ha_url, ha_tok, targets,
+                                    "Finance Tracker — AI Trader (Auto)",
+                                    f"Weekly analysis complete — {n} trades. Return: {sign}{ret:.2f}%",
+                                )
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+
+async def _session_cleanup_loop():
+    """Background task: purge expired sessions every hour."""
+    await asyncio.sleep(300)  # wait 5 min after startup
+    while True:
+        try:
+            from deps import purge_expired_sessions
+            with Session(engine) as session:
+                purge_expired_sessions(session)
+        except Exception:
+            pass
+        await asyncio.sleep(3600)
+
+
 async def _price_refresh_loop():
     """Background task: auto-refresh investment and crypto prices."""
     await asyncio.sleep(300)  # wait 5 min after startup
@@ -701,12 +766,16 @@ async def lifespan(app: FastAPI):
     task3 = asyncio.create_task(_price_refresh_loop())
     task4 = asyncio.create_task(_payslip_watch_loop())
     task5 = asyncio.create_task(_gmail_scan_loop())
+    task6 = asyncio.create_task(_session_cleanup_loop())
+    task7 = asyncio.create_task(_paper_trading_loop())
     yield
     task1.cancel()
     task2.cancel()
     task3.cancel()
     task4.cancel()
     task5.cancel()
+    task6.cancel()
+    task7.cancel()
 
 
 app = FastAPI(title="Finance Tracker", lifespan=lifespan)
@@ -754,6 +823,9 @@ app.include_router(market_pulse.router)
 app.include_router(loans.router)
 app.include_router(advisor.router)
 app.include_router(trips.router)
+app.include_router(property_tracker.router)
+app.include_router(security.router)
+app.include_router(paper_trading.router)
 
 # MCP server (Finance Tracker tools for Claude Code on desktop)
 try:
@@ -781,12 +853,31 @@ def get_settings():
 
 
 @app.post("/api/settings")
-async def update_settings(request: Request):
+async def update_settings(
+    request: Request,
+    authorization: str = __import__("fastapi").Header(default=None, alias="authorization"),
+):
+    # Require authentication
+    from database import UserSession, User as _User
+    from deps import get_setting as _get_setting
+    if not authorization or not authorization.startswith("Bearer "):
+        from fastapi import HTTPException as _HTTPException
+        raise _HTTPException(401, "Not authenticated")
+    tok = authorization[7:]
+    with Session(engine) as _s:
+        sess = _s.get(UserSession, tok)
+        if not sess:
+            from fastapi import HTTPException as _HTTPException
+            raise _HTTPException(401, "Invalid or expired session")
+
     data = await request.json()
+    _SENSITIVE = {"anthropic_api_key", "gemini_api_key", "gmail_app_password", "ha_token",
+                  "binance_api_key", "binance_api_secret", "stake_session_token"}
+    changed_sensitive = [k for k in data if k in _SENSITIVE and data[k] not in ("", "***")]
+
     with Session(engine) as session:
         for key, value in data.items():
-            if key in ("anthropic_api_key", "gemini_api_key", "gmail_app_password", "ha_token",
-                       "binance_api_key", "binance_api_secret", "stake_session_token") and value == "***":
+            if key in _SENSITIVE and value == "***":
                 continue  # don't overwrite with masked value
             s = session.get(Setting, key)
             if s:
@@ -795,6 +886,25 @@ async def update_settings(request: Request):
                 s = Setting(key=key, value=str(value))
             session.add(s)
         session.commit()
+
+        # Notify on sensitive settings change
+        if changed_sensitive:
+            try:
+                notify_enabled = _get_setting(session, "security_notify_settings_change", "1") == "1"
+                if notify_enabled:
+                    from routers.notify import _send_notification, _get_notify_config
+                    ha_url, ha_tok, targets = _get_notify_config(session)
+                    if ha_tok and targets:
+                        import asyncio as _asyncio
+                        keys_str = ", ".join(changed_sensitive)
+                        _asyncio.create_task(_send_notification(
+                            ha_url, ha_tok, targets,
+                            "⚠️ Finance Tracker — Settings Changed",
+                            f"Sensitive settings were updated: {keys_str}. If this wasn't you, check your account immediately.",
+                        ))
+            except Exception:
+                pass
+
     return {"ok": True}
 
 

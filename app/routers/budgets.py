@@ -122,6 +122,71 @@ def budgets_vs_spend(
     return result
 
 
+@router.get("/forecast")
+def budget_forecast(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Project each budget category's spend to month-end based on daily pace."""
+    import calendar
+    today = date.today()
+    month, year = today.month, today.year
+    days_elapsed = today.day
+    days_in_month = calendar.monthrange(year, month)[1]
+    days_remaining = days_in_month - days_elapsed
+
+    budgets = session.exec(
+        select(Budget).where(
+            Budget.user_id == current_user.id,
+            Budget.month == month,
+            Budget.year == year,
+        )
+    ).all()
+
+    result = []
+    for b in budgets:
+        cat = session.get(Category, b.category_id)
+        if not cat:
+            continue
+        spend = float(session.exec(
+            select(func.coalesce(func.sum(Transaction.amount), 0)).where(
+                Transaction.user_id == current_user.id,
+                Transaction.category_id == b.category_id,
+                Transaction.is_credit == False,
+                Transaction.is_reimbursable == False,
+                func.strftime("%m", Transaction.date) == f"{month:02d}",
+                func.strftime("%Y", Transaction.date) == str(year),
+            )
+        ).one())
+
+        daily_rate = spend / days_elapsed if days_elapsed > 0 else 0
+        projected = round(spend + daily_rate * days_remaining, 2)
+        budget_amt = b.amount_cents / 100
+        proj_pct = round(projected / budget_amt * 100, 1) if budget_amt > 0 else 0
+
+        result.append({
+            "category_id": b.category_id,
+            "category_name": cat.name,
+            "category_colour": cat.colour,
+            "budget": budget_amt,
+            "spend_so_far": round(spend, 2),
+            "projected_total": projected,
+            "proj_pct": proj_pct,
+            "days_elapsed": days_elapsed,
+            "days_in_month": days_in_month,
+            "status": "green" if proj_pct < 90 else ("amber" if proj_pct < 110 else "red"),
+        })
+
+    result.sort(key=lambda x: x["proj_pct"], reverse=True)
+    return {
+        "month": today.strftime("%B %Y"),
+        "days_elapsed": days_elapsed,
+        "days_in_month": days_in_month,
+        "days_remaining": days_remaining,
+        "items": result,
+    }
+
+
 @router.get("/zbb-summary")
 def zbb_summary(
     month: int,

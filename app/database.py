@@ -34,16 +34,27 @@ class User(SQLModel, table=True):
 
 
 class UserSession(SQLModel, table=True):
-    token:      str = Field(primary_key=True)
-    user_id:    int = Field(foreign_key="user.id")
+    token:        str = Field(primary_key=True)
+    user_id:      int = Field(foreign_key="user.id")
+    created_at:   str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    expires_at:   str  # ISO datetime string (absolute TTL)
+    last_used_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class LoginAuditLog(SQLModel, table=True):
+    id:         Optional[int] = Field(default=None, primary_key=True)
+    user_id:    Optional[int] = None       # None if user not found
+    username:   str = ""                   # username attempted
+    ip_address: str = ""                   # client IP
+    success:    bool = False
+    reason:     str = ""                   # "ok" | "wrong_password" | "user_not_found" | "locked_out"
     created_at: str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
-    expires_at: str  # ISO datetime string
 
 
 class Account(SQLModel, table=True):
     id:           Optional[int] = Field(default=None, primary_key=True)
     name:         str
-    bank:         str = "Macquarie"
+    bank:         str = ""
     account_number: str = ""
     linked_loan_id: Optional[int] = None   # if set, CSV imports sync loan balance + payments
     offset_loan_id: Optional[int] = None   # if set, CSV imports sync this account balance → loan.offset_cents
@@ -415,6 +426,36 @@ class Trip(SQLModel, table=True):
     notes:          Optional[str] = None
 
 
+class Property(SQLModel, table=True):
+    """Investment property tracker — rental yield, equity, and deductible expenses."""
+    id:                     Optional[int] = Field(default=None, primary_key=True)
+    address:                str
+    property_type:          str = "house"        # house | unit | townhouse | land | commercial
+    purchase_price_cents:   int = 0              # original purchase price
+    purchase_date:          Optional[date] = None
+    current_value_cents:    int = 0              # estimated current market value
+    mortgage_outstanding_cents: int = 0          # current mortgage balance
+    interest_rate:          float = 0.0          # annual mortgage rate %
+    weekly_rent_cents:      int = 0              # current weekly rent
+    ownership_pct:          float = 100.0        # % owned (50 for joint)
+    is_active:              bool = True
+    notes:                  Optional[str] = None
+    user_id:                int = 1
+
+
+class PropertyExpense(SQLModel, table=True):
+    """Individual income/expense item for an investment property."""
+    id:             Optional[int] = Field(default=None, primary_key=True)
+    property_id:    int = Field(foreign_key="property.id")
+    date:           date
+    category:       str = "other"   # rent_income | interest | rates | water | insurance |
+                                    # strata | management | repairs | maintenance | depreciation | advertising | other
+    description:    Optional[str] = None
+    amount_cents:   int = 0         # positive = expense; negative = income (for rent_income)
+    is_deductible:  bool = True
+    user_id:        int = 1
+
+
 class AdvisorSession(SQLModel, table=True):
     """Stores each AI financial advisor report and follow-up chat messages."""
     id:            Optional[int] = Field(default=None, primary_key=True)
@@ -423,6 +464,60 @@ class AdvisorSession(SQLModel, table=True):
     report_text:   str = ""
     user_context:  Optional[str] = None      # user-provided notes/context
     chat_messages: Optional[str] = None      # JSON: [{role, content, ts}, ...]
+
+
+class PaperPortfolio(SQLModel, table=True):
+    """Simulated investment portfolio managed by the AI trader."""
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    user_id:       int = Field(default=1)
+    name:          str = "AI Trader"
+    strategy:      str = "aggressive"        # aggressive | moderate | conservative
+    starting_cash: float = 1000.0
+    cash_aud:      float = 1000.0            # remaining uninvested cash
+    markets:       str = "asx,us"           # comma-separated: asx, us
+    created_at:    str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    updated_at:    str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+
+
+class PaperHolding(SQLModel, table=True):
+    """Current position in the paper portfolio."""
+    id:                Optional[int] = Field(default=None, primary_key=True)
+    portfolio_id:      int = Field(foreign_key="paperportfolio.id")
+    ticker:            str
+    name:              Optional[str] = None
+    qty:               float = 0.0
+    avg_cost_aud:      float = 0.0           # weighted avg purchase price in AUD
+    current_price_aud: float = 0.0
+    value_aud:         float = 0.0
+    gain_aud:          float = 0.0
+    gain_pct:          float = 0.0
+    currency:          str = "AUD"           # original quote currency
+    user_id:           int = Field(default=1)
+
+
+class PaperTrade(SQLModel, table=True):
+    """One simulated trade execution."""
+    id:           Optional[int] = Field(default=None, primary_key=True)
+    portfolio_id: int = Field(foreign_key="paperportfolio.id")
+    ticker:       str
+    side:         str                        # "BUY" | "SELL"
+    qty:          float
+    price_aud:    float                      # execution price in AUD
+    brokerage_aud: float = 0.0
+    total_aud:    float = 0.0               # +ve = cash deducted (BUY); -ve = cash received (SELL)
+    executed_at:  str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    reason:       Optional[str] = None      # AI rationale
+    user_id:      int = Field(default=1)
+
+
+class PaperAnalysis(SQLModel, table=True):
+    """One AI analysis session with trades executed."""
+    id:            Optional[int] = Field(default=None, primary_key=True)
+    portfolio_id:  int = Field(foreign_key="paperportfolio.id")
+    created_at:    str = Field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    analysis_text: str = ""                  # markdown analysis from AI
+    trades_json:   Optional[str] = None     # JSON list of PaperTrade IDs executed
+    user_id:       int = Field(default=1)
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +610,10 @@ DEFAULT_SETTINGS = {
     "ai_newsletter_calls_est": "4",
     "ai_categorise_calls_est": "50",
     "ai_payslip_calls_est": "2",
+    "ai_trader_calls_est": "4",
+    "paper_auto_trade_enabled": "0",
+    "paper_auto_trade_day": "1",     # weekday (0=Mon, 6=Sun)
+    "paper_last_analysis": "",
 }
 
 # Tables that need a user_id column added for existing DBs
@@ -567,6 +666,11 @@ def _migrate():
     # Category: exclude from personal spend totals (e.g. Transfers)
     new_cols += [
         ("category", "exclude_from_spend", "INTEGER DEFAULT 0"),
+    ]
+
+    # Session tracking
+    new_cols += [
+        ("usersession", "last_used_at", "TEXT DEFAULT ''"),
     ]
 
     # Add user_id to all tables that need it

@@ -675,3 +675,116 @@ def delete_transaction(
     session.delete(txn)
     session.commit()
     return {"ok": True}
+
+
+# ── Transfer Detection ────────────────────────────────────────────────────────
+
+class ConfirmTransfersBody(BaseModel):
+    pairs: List[dict]   # [{debit_id: int, credit_id: int}]
+
+
+@router.get("/transfer-candidates")
+def transfer_candidates(
+    days: int = 90,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Find debit/credit pairs across different accounts that look like internal transfers."""
+    since = date.today() - timedelta(days=days)
+
+    # Category IDs that are already marked as transfers/excluded
+    excl_cats = session.exec(
+        select(Category).where(Category.exclude_from_spend == True)
+    ).all()
+    excl_ids = {c.id for c in excl_cats}
+
+    # All recent non-transfer transactions
+    all_txns = session.exec(
+        select(Transaction).where(
+            Transaction.user_id == current_user.id,
+            Transaction.date >= since,
+        )
+    ).all()
+    # Filter out already-categorised transfers
+    all_txns = [t for t in all_txns if t.category_id not in excl_ids]
+
+    debits  = [t for t in all_txns if not t.is_credit]
+    credits = [t for t in all_txns if t.is_credit]
+
+    # Index credits by amount (cents) for fast lookup
+    credits_by_cents: dict[int, list] = {}
+    for c in credits:
+        k = round(c.amount * 100)
+        credits_by_cents.setdefault(k, []).append(c)
+
+    # Load accounts for name lookup
+    accs = {a.id: a for a in session.exec(select(Account).where(Account.user_id == current_user.id)).all()}
+
+    pairs = []
+    seen_credit_ids: set[int] = set()
+    seen_debit_ids:  set[int] = set()
+
+    for debit in sorted(debits, key=lambda t: t.date, reverse=True):
+        if debit.id in seen_debit_ids:
+            continue
+        k = round(debit.amount * 100)
+        for credit in credits_by_cents.get(k, []):
+            if credit.id in seen_credit_ids:
+                continue
+            if credit.account_id == debit.account_id:
+                continue  # same account — not a transfer
+            date_diff = abs((credit.date - debit.date).days)
+            if date_diff > 7:
+                continue
+
+            seen_debit_ids.add(debit.id)
+            seen_credit_ids.add(credit.id)
+
+            def _fmt(t: Transaction) -> dict:
+                acc = accs.get(t.account_id)
+                return {
+                    "id": t.id,
+                    "date": str(t.date),
+                    "description": t.description,
+                    "amount": t.amount,
+                    "account_id": t.account_id,
+                    "account_name": acc.name if acc else "Unknown",
+                }
+
+            pairs.append({
+                "debit":  _fmt(debit),
+                "credit": _fmt(credit),
+                "amount": debit.amount,
+                "date_diff_days": date_diff,
+                "confidence": "high" if date_diff == 0 else ("medium" if date_diff <= 3 else "low"),
+            })
+            break  # one credit match per debit
+
+    return {"candidates": pairs, "count": len(pairs)}
+
+
+@router.post("/confirm-transfers")
+def confirm_transfers(
+    body: ConfirmTransfersBody,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Mark debit+credit pairs as 'Transfers' category."""
+    transfers_cat = session.exec(
+        select(Category).where(Category.name == "Transfers")
+    ).first()
+    if not transfers_cat:
+        raise HTTPException(400, "Transfers category not found — create it in Categories first")
+
+    confirmed = 0
+    for pair in body.pairs:
+        for txn_id in [pair.get("debit_id"), pair.get("credit_id")]:
+            if not txn_id:
+                continue
+            txn = session.get(Transaction, txn_id)
+            if txn and txn.user_id == current_user.id:
+                txn.category_id = transfers_cat.id
+                session.add(txn)
+                confirmed += 1
+    session.commit()
+    return {"confirmed": confirmed // 2, "transactions_updated": confirmed}

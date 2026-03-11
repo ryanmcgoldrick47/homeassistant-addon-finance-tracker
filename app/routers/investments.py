@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from database import ShareHolding, get_session, User
+from database import ShareHolding, CryptoHolding, get_session, User
 from deps import get_current_user
 
 router = APIRouter(prefix="/api/investments", tags=["investments"])
@@ -360,4 +360,70 @@ async def refresh_prices(
         "updated": updated,
         "total_value_aud": total_value,
         "errors": errors,
+    }
+
+
+@router.get("/tax-loss-alerts")
+def tax_loss_alerts(
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Flag holdings with unrealised losses — useful for tax-loss harvesting before 30 June."""
+    today = date_type.today()
+    # Days until 30 June of current FY
+    fy_end = date_type(today.year, 6, 30) if today.month < 7 else date_type(today.year + 1, 6, 30)
+    days_to_fy_end = (fy_end - today).days
+
+    share_holdings = session.exec(
+        select(ShareHolding).where(ShareHolding.user_id == current_user.id)
+    ).all()
+    crypto_holdings = session.exec(
+        select(CryptoHolding).where(CryptoHolding.user_id == current_user.id)
+    ).all()
+
+    losses = []
+    total_unrealised_loss = 0.0
+
+    for h in share_holdings:
+        if h.gain_aud < 0:
+            total_unrealised_loss += h.gain_aud
+            losses.append({
+                "id": h.id,
+                "asset_type": "share",
+                "ticker": h.ticker,
+                "name": h.name or h.ticker,
+                "qty": h.qty,
+                "avg_cost_aud": round(h.avg_cost_aud, 4),
+                "price_aud": round(h.price_aud, 4),
+                "cost_basis_aud": round(h.cost_basis_aud, 2),
+                "value_aud": round(h.value_aud, 2),
+                "gain_aud": round(h.gain_aud, 2),
+                "gain_pct": round(h.gain_pct, 1),
+            })
+
+    for c in crypto_holdings:
+        if c.gain_aud < 0 and c.cost_basis_aud > 0:
+            total_unrealised_loss += c.gain_aud
+            losses.append({
+                "id": c.id,
+                "asset_type": "crypto",
+                "ticker": c.symbol,
+                "name": c.symbol,
+                "qty": c.qty,
+                "avg_cost_aud": round(c.avg_cost_aud, 4),
+                "price_aud": round(c.price_aud, 4),
+                "cost_basis_aud": round(c.cost_basis_aud, 2),
+                "value_aud": round(c.value_aud, 2),
+                "gain_aud": round(c.gain_aud, 2),
+                "gain_pct": round(c.gain_pct, 1),
+            })
+
+    losses.sort(key=lambda x: x["gain_aud"])  # worst first
+
+    return {
+        "fy_end": str(fy_end),
+        "days_to_fy_end": days_to_fy_end,
+        "total_unrealised_loss": round(total_unrealised_loss, 2),
+        "loss_count": len(losses),
+        "losses": losses,
     }

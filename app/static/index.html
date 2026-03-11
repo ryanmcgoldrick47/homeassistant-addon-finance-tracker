@@ -918,6 +918,48 @@
         </div>
       </div>
 
+      <!-- Rolling 12-Month Savings Rate card (dashboard) -->
+      <template x-if="page === 'dashboard' && dashSavingsRate && dashSavingsRate.total_months_with_data >= 2">
+        <div class="card" style="margin-bottom:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+            <div class="section-title" style="margin:0;">Rolling 12-Month Savings Rate</div>
+            <div style="display:flex;align-items:baseline;gap:6px;">
+              <span style="font-size:26px;font-weight:700;"
+                :style="(dashSavingsRate.avg_pct||0) >= (dashSavingsRate.target_pct||20) ? 'color:var(--green)' : (dashSavingsRate.avg_pct||0) > 0 ? 'color:var(--amber)' : 'color:var(--red)'"
+                x-text="(dashSavingsRate.avg_pct||0).toFixed(1) + '%'"></span>
+              <span style="font-size:12px;color:var(--muted);">12-mo avg · target
+                <span x-text="(dashSavingsRate.target_pct||20) + '%'"></span>
+              </span>
+            </div>
+          </div>
+          <!-- Mini sparkline bars -->
+          <div style="display:flex;gap:4px;align-items:flex-end;height:48px;">
+            <template x-for="mo in (dashSavingsRate.months||[])" :key="mo.label">
+              <div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:2px;">
+                <div style="width:100%;border-radius:3px 3px 0 0;min-height:2px;"
+                  :style="`height:${Math.max(2, Math.min(Math.abs(mo.actual_pct) / Math.max(...(dashSavingsRate.months||[{actual_pct:1}]).map(m=>Math.abs(m.actual_pct)||1)) * 36, 36))}px;background:${mo.actual_pct >= (dashSavingsRate.target_pct||20) ? 'var(--green)' : mo.actual_pct >= 0 ? 'var(--amber)' : 'var(--red)'};opacity:${mo.has_data ? 0.85 : 0.2};`">
+                </div>
+                <div style="font-size:9px;color:var(--muted);white-space:nowrap;" x-text="mo.label"></div>
+              </div>
+            </template>
+          </div>
+          <!-- Summary row -->
+          <div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:10px;padding-top:10px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);">
+            <span>
+              <span style="color:var(--green);font-weight:600;" x-text="dashSavingsRate.months_met"></span>
+              / <span x-text="dashSavingsRate.total_months_with_data"></span> months met target
+            </span>
+            <span x-show="(dashSavingsRate.avg_pct||0) < (dashSavingsRate.target_pct||20)" style="color:var(--amber);">
+              <span x-text="((dashSavingsRate.target_pct||20) - (dashSavingsRate.avg_pct||0)).toFixed(1) + '% below target'"></span>
+            </span>
+            <span x-show="(dashSavingsRate.avg_pct||0) >= (dashSavingsRate.target_pct||20)" style="color:var(--green);">
+              On track — <span x-text="((dashSavingsRate.avg_pct||0) - (dashSavingsRate.target_pct||20)).toFixed(1) + '% above target'"></span>
+            </span>
+            <span style="margin-left:auto;"><a @click.prevent="page='goals'" href="#" style="color:var(--accent);text-decoration:none;font-size:12px;">Edit target →</a></span>
+          </div>
+        </div>
+      </template>
+
       <!-- ═══════════ TRANSACTIONS ═══════════ -->
       <div x-show="page === 'transactions'" x-cloak>
 
@@ -1417,23 +1459,46 @@
         <div class="grid grid-2 gap-4">
 
           <div class="card">
-            <div class="section-title">Import Macquarie CSV</div>
+            <div class="section-title">Import Bank CSV</div>
             <div class="alert alert-info" style="margin-bottom:14px;">
-              <strong>How to export from Macquarie:</strong><br>
-              Log in → select account → Transactions tab → Download/Export → choose <strong>CSV</strong> format. PDFs won't work.
+              <strong>How to export from your bank:</strong><br>
+              Most banks: log in → select account → Transactions → Download/Export → choose <strong>CSV</strong> format.
+              Supported column formats: Date, Description, Credit, Debit, Balance (or Amount).
             </div>
             <div style="display:flex;flex-direction:column;gap:14px;">
               <div>
-                <label class="form-label">Account</label>
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                  <span>Account</span>
+                  <span x-show="importDetectedAccount && importDetectedAccount.confidence === 'high'"
+                    style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,.15);color:#22c55e;font-weight:600;">
+                    ✓ Auto-detected: <span x-text="importDetectedAccount?.account_name"></span>
+                  </span>
+                  <span x-show="importDetectedAccount && importDetectedAccount.confidence === 'low'"
+                    style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:600;">
+                    Possible match — verify below
+                  </span>
+                </label>
                 <select x-model="importAccountId">
                   <template x-for="a in accounts" :key="a.id">
-                    <option :value="a.id" x-text="`${a.name} (${a.bank})`"></option>
+                    <option :value="a.id" x-text="`${a.name}${a.bank ? ' (' + a.bank + ')' : ''}`"></option>
                   </template>
                 </select>
+                <!-- Auto-create prompt when CSV has an unrecognised account -->
+                <template x-if="importSuggestCreate">
+                  <div style="display:flex;align-items:center;gap:8px;margin-top:6px;padding:7px 10px;background:rgba(99,102,241,.08);border-radius:8px;border:1px solid rgba(99,102,241,.2);">
+                    <span style="font-size:12px;color:var(--muted);">New account detected:</span>
+                    <span style="font-size:12px;font-weight:600;" x-text="importSuggestCreate"></span>
+                    <button @click="createAccountFromCSV()" class="btn btn-ghost btn-sm" style="font-size:11px;padding:2px 10px;margin-left:auto;"
+                      :disabled="importCreatingAccount">
+                      <span x-show="!importCreatingAccount">+ Create account</span>
+                      <span x-show="importCreatingAccount">Creating…</span>
+                    </button>
+                  </div>
+                </template>
               </div>
               <div>
                 <label class="form-label">CSV File</label>
-                <input type="file" accept=".csv" @change="importFile = $event.target.files[0]"
+                <input type="file" accept=".csv" @change="onImportFileChange($event)"
                   style="font-size:13px;" />
               </div>
               <button @click="doImport()" class="btn btn-primary"
@@ -1442,6 +1507,58 @@
               <div x-show="importError" class="alert alert-error" x-text="importError"></div>
             </div>
           </div>
+
+          <!-- Transfer Candidates review card -->
+          <template x-if="transferCandidates.length > 0">
+            <div class="card" style="margin-bottom:16px;border-left:4px solid #6366f1;background:rgba(99,102,241,.04);">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+                <div>
+                  <div style="font-size:14px;font-weight:700;">Possible Internal Transfers Detected</div>
+                  <div style="font-size:12px;color:var(--muted);margin-top:2px;">These debit/credit pairs may be transfers between your accounts — not real expenses. Confirming will categorise them as Transfers and exclude them from spending totals.</div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;">
+                  <button @click="confirmAllTransfers()" class="btn btn-primary btn-sm">Confirm All</button>
+                  <button @click="transferCandidates=[]" class="btn btn-ghost btn-sm">Dismiss All</button>
+                </div>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <template x-for="(pair, idx) in transferCandidates" :key="idx">
+                  <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;background:var(--card-bg,#1e2533);border-radius:8px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:0;">
+                      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:15px;font-weight:700;color:var(--green);" x-text="'$' + fmt(pair.amount)"></span>
+                        <span x-show="pair.confidence === 'high'" style="font-size:11px;padding:1px 6px;border-radius:8px;background:rgba(34,197,94,.15);color:#22c55e;">same day</span>
+                        <span x-show="pair.confidence === 'medium'" style="font-size:11px;padding:1px 6px;border-radius:8px;background:rgba(245,158,11,.15);color:#f59e0b;" x-text="pair.date_diff_days + 'd apart'"></span>
+                        <span x-show="pair.confidence === 'low'" style="font-size:11px;padding:1px 6px;border-radius:8px;background:rgba(239,68,68,.12);color:#ef4444;" x-text="pair.date_diff_days + 'd apart — verify'"></span>
+                      </div>
+                      <div style="font-size:12px;color:var(--muted);margin-top:4px;display:flex;gap:16px;flex-wrap:wrap;">
+                        <span>
+                          <span style="color:var(--red);">− </span>
+                          <span x-text="pair.debit.account_name"></span>
+                          <span style="color:var(--muted);"> · </span>
+                          <span x-text="pair.debit.description.slice(0,40)"></span>
+                          <span style="color:var(--muted);"> · </span>
+                          <span x-text="pair.debit.date"></span>
+                        </span>
+                        <span>
+                          <span style="color:var(--green);">+ </span>
+                          <span x-text="pair.credit.account_name"></span>
+                          <span style="color:var(--muted);"> · </span>
+                          <span x-text="pair.credit.description.slice(0,40)"></span>
+                          <span style="color:var(--muted);"> · </span>
+                          <span x-text="pair.credit.date"></span>
+                        </span>
+                      </div>
+                    </div>
+                    <div style="display:flex;gap:6px;flex-shrink:0;">
+                      <button @click="confirmTransfer(pair, idx)" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 10px;">Confirm</button>
+                      <button @click="transferCandidates.splice(idx,1)" class="btn btn-ghost btn-sm" style="font-size:12px;padding:3px 10px;color:var(--muted);">Not a transfer</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </template>
 
           <div class="card">
             <div class="section-title">Manage Accounts</div>
@@ -1611,13 +1728,13 @@
             </div>
           </div>
           <div x-show="!folderWatchStatus?.recent_log?.length" style="font-size:13px;color:var(--muted);">
-            No imports yet. Drop a Macquarie CSV into the watch folder to get started.
+            No imports yet. Drop a bank CSV into the watch folder to get started.
           </div>
         </div>
 
         <div class="card" style="margin-top:16px;">
           <div class="section-title">CSV Format Reference</div>
-          <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">Macquarie exports in this format:</p>
+          <p style="font-size:13px;color:var(--muted);margin-bottom:10px;">Standard CSV format (used by most AU banks):</p>
           <pre style="background:var(--bg);border:1px solid var(--border);border-radius:10px;
             padding:12px;font-size:12px;overflow-x:auto;color:var(--text);">Date,Description,Credit,Debit,Balance
 01/07/2025,WOOLWORTHS 1234 WOLLONGONG,,45.20,1234.56
@@ -1698,6 +1815,21 @@
               </div>
             </div>
           </template>
+        </div>
+
+        <!-- Transfer Detector (manual scan) -->
+        <div class="card" style="margin-top:16px;">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:10px;">
+            <div>
+              <div class="section-title" style="margin-bottom:2px;">Internal Transfer Detector</div>
+              <div style="font-size:12px;color:var(--muted);">Finds debit/credit pairs across your accounts that look like transfers (same amount, ±2 days) — excludes them from spend totals when confirmed</div>
+            </div>
+            <button @click="loadTransferCandidates()" class="btn btn-ghost btn-sm" :disabled="transferCandidatesLoading">
+              <span x-show="!transferCandidatesLoading">Scan for Transfers</span>
+              <span x-show="transferCandidatesLoading">Scanning…</span>
+            </button>
+          </div>
+          <div x-show="!transferCandidatesLoading && transferCandidates.length === 0" style="font-size:13px;color:var(--muted);">Click scan to check for unconfirmed internal transfers.</div>
         </div>
 
         <!-- Duplicate Detector -->
@@ -1943,6 +2075,46 @@
             <template x-for="y in years" :key="y"><option :value="y" x-text="y"></option></template>
           </select>
         </div>
+
+        <!-- Month-End Spend Forecast (current month only) -->
+        <template x-if="budgetForecast && budgetForecast.items && budgetForecast.items.length > 0 && budgetMonth == new Date().getMonth()+1 && budgetYear == new Date().getFullYear()">
+          <div class="card" style="margin-bottom:14px;border-left:3px solid var(--amber,#f59e0b);">
+            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:12px;">
+              <div>
+                <div style="font-weight:600;font-size:14px;">Month-End Forecast</div>
+                <div style="font-size:12px;color:var(--muted);" x-text="'Day ' + budgetForecast.days_elapsed + ' of ' + budgetForecast.days_in_month + ' — projecting at current pace'"></div>
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              <template x-for="item in budgetForecast.items" :key="item.category_id">
+                <div>
+                  <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:3px;">
+                    <span style="font-size:12px;font-weight:500;" x-text="item.category_name"></span>
+                    <span style="font-size:12px;">
+                      <span style="color:var(--muted);" x-text="'$' + fmt(item.spend_so_far) + ' spent · '"></span>
+                      <span :style="item.status==='red' ? 'color:var(--red);font-weight:600' : item.status==='amber' ? 'color:var(--amber);font-weight:600' : 'color:var(--muted)'"
+                        x-text="'~$' + fmt(item.projected_total) + ' projected'"></span>
+                      <span style="color:var(--muted);" x-text="' / $' + fmt(item.budget)"></span>
+                    </span>
+                  </div>
+                  <div style="height:6px;background:var(--surf2);border-radius:99px;overflow:hidden;position:relative;">
+                    <!-- actual spend -->
+                    <div :style="`position:absolute;left:0;top:0;height:100%;border-radius:99px;background:${item.category_colour||'var(--accent)'};width:${Math.min(item.spend_so_far/item.budget*100,100)}%;opacity:0.9;`"></div>
+                    <!-- projected extension -->
+                    <div :style="`position:absolute;top:0;height:100%;border-radius:0 99px 99px 0;opacity:0.35;
+                      left:${Math.min(item.spend_so_far/item.budget*100,100)}%;
+                      width:${Math.min(Math.max(0,(item.projected_total-item.spend_so_far)/item.budget*100), 100-Math.min(item.spend_so_far/item.budget*100,100))}%;
+                      background:${item.status==='red'?'var(--red)':item.status==='amber'?'var(--amber)':item.category_colour||'var(--accent)'};`"></div>
+                  </div>
+                  <div x-show="item.status !== 'green'" style="font-size:10px;margin-top:2px;"
+                    :style="item.status==='red' ? 'color:var(--red)' : 'color:var(--amber)'"
+                    x-text="item.status==='red' ? 'Projected to overspend by $' + fmt(item.projected_total - item.budget) : 'Projected to reach ' + item.proj_pct.toFixed(0) + '% of budget'">
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
 
         <!-- Zero-Based Budget summary -->
         <div class="card" style="margin-bottom:14px;" x-show="zbbSummary && zbbSummary.income > 0">
@@ -3847,6 +4019,58 @@
             <button @click="addHoldingOpen = true" class="btn btn-primary btn-sm">+ Add Holding</button>
           </div>
         </div>
+        <!-- Tax-Loss Harvesting Alert -->
+        <template x-if="taxLossAlerts && taxLossAlerts.loss_count > 0">
+          <div class="card" style="margin-bottom:16px;border-left:4px solid #f59e0b;background:rgba(245,158,11,.05);">
+            <div style="display:flex;align-items:flex-start;gap:10px;">
+              <div style="font-size:22px;flex-shrink:0;line-height:1.2;">⚠️</div>
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;margin-bottom:8px;">
+                  <div style="font-size:14px;font-weight:700;">Tax-Loss Harvesting Opportunity</div>
+                  <div style="font-size:12px;color:var(--muted);" x-text="taxLossAlerts.days_to_fy_end + ' days until 30 Jun · FY ends ' + taxLossAlerts.fy_end"></div>
+                </div>
+                <div style="font-size:13px;color:var(--muted);margin-bottom:10px;">
+                  You have <span style="font-weight:600;color:#f59e0b;" x-text="taxLossAlerts.loss_count"></span> holding(s) with unrealised losses totalling
+                  <span style="font-weight:600;color:var(--red);" x-text="'$' + fmt(Math.abs(taxLossAlerts.total_unrealised_loss))"></span>.
+                  Selling before 30 June may offset capital gains and reduce your tax liability.
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <template x-for="loss in taxLossAlerts.losses" :key="loss.id">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;background:var(--card-bg,#1e2533);border-radius:8px;flex-wrap:wrap;">
+                      <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+                        <div style="font-size:13px;font-weight:700;white-space:nowrap;" x-text="loss.ticker"></div>
+                        <div style="font-size:11px;padding:1px 6px;border-radius:4px;font-weight:600;flex-shrink:0;"
+                          :style="loss.asset_type === 'crypto' ? 'background:rgba(99,102,241,.15);color:#818cf8' : 'background:rgba(56,189,248,.15);color:#38bdf8'"
+                          x-text="loss.asset_type === 'crypto' ? 'Crypto' : 'Share'"></div>
+                        <div style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="loss.name !== loss.ticker ? loss.name : ''"></div>
+                      </div>
+                      <div style="display:flex;gap:16px;align-items:center;flex-shrink:0;">
+                        <div style="text-align:right;">
+                          <div style="font-size:11px;color:var(--muted);">Qty</div>
+                          <div style="font-size:13px;font-weight:600;" x-text="loss.qty"></div>
+                        </div>
+                        <div style="text-align:right;">
+                          <div style="font-size:11px;color:var(--muted);">Cost</div>
+                          <div style="font-size:13px;font-weight:600;" x-text="'$' + fmt(loss.cost_basis_aud)"></div>
+                        </div>
+                        <div style="text-align:right;">
+                          <div style="font-size:11px;color:var(--muted);">Now</div>
+                          <div style="font-size:13px;font-weight:600;" x-text="'$' + fmt(loss.value_aud)"></div>
+                        </div>
+                        <div style="text-align:right;">
+                          <div style="font-size:11px;color:var(--muted);">Loss</div>
+                          <div style="font-size:13px;font-weight:700;color:var(--red);" x-text="'$' + fmt(Math.abs(loss.gain_aud)) + ' (' + Math.abs(loss.gain_pct).toFixed(1) + '%)'"></div>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <div style="font-size:11px;color:var(--muted);margin-top:8px;">Estimate only — consult your tax agent before selling. CGT wash-sale rules may apply.</div>
+              </div>
+            </div>
+          </div>
+        </template>
+
         <!-- Summary cards -->
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:12px;margin-bottom:16px;">
           <div class="card" style="padding:14px 16px;position:relative;overflow:hidden;">
@@ -4733,18 +4957,33 @@
               </div>
               <!-- Extra repayment calculator (simulation only) -->
               <div style="margin-bottom:10px;">
-                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
                   <span style="font-size:12px;color:var(--muted);font-weight:600;">Extra Repayment Simulator</span>
-                  <span style="font-size:10px;color:var(--muted);background:var(--surf2);padding:1px 6px;border-radius:99px;">simulation only — does not update loan balance</span>
+                  <span style="font-size:10px;color:var(--muted);background:var(--surf2);padding:1px 6px;border-radius:99px;">simulation only</span>
+                </div>
+                <!-- Mode toggle -->
+                <div style="display:flex;gap:0;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:8px;width:fit-content;">
+                  <button @click="loanExtraMode[loan.id] = 'monthly'"
+                    :style="(!loanExtraMode[loan.id] || loanExtraMode[loan.id]==='monthly') ? 'background:var(--accent);color:#fff;' : 'background:var(--surf2);color:var(--muted);'"
+                    style="font-size:12px;padding:5px 14px;border:none;cursor:pointer;">Monthly extra</button>
+                  <button @click="loanExtraMode[loan.id] = 'lumpsum'"
+                    :style="loanExtraMode[loan.id]==='lumpsum' ? 'background:var(--accent);color:#fff;' : 'background:var(--surf2);color:var(--muted);'"
+                    style="font-size:12px;padding:5px 14px;border:none;cursor:pointer;">One-off lump sum</button>
                 </div>
                 <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                  <input type="number" placeholder="Extra $/month" style="width:160px;"
+                  <input type="number"
+                    :placeholder="loanExtraMode[loan.id]==='lumpsum' ? 'Lump sum amount $' : 'Extra per month $'"
+                    style="width:180px;"
                     x-model="loanExtraInput[loan.id]" @keyup.enter="calcLoanExtra(loan.id)" min="0" />
                   <button @click="calcLoanExtra(loan.id)" class="btn btn-ghost btn-sm"
                     :disabled="loanExtraLoading[loan.id]">Calculate</button>
                 </div>
                 <template x-if="loanExtraResult[loan.id]">
                   <div style="margin-top:8px;padding:8px 10px;background:rgba(52,211,153,.1);border-radius:8px;border:1px solid rgba(52,211,153,.25);">
+                    <div style="font-size:11px;color:var(--muted);margin-bottom:6px;"
+                      x-text="loanExtraResult[loan.id].mode === 'lumpsum'
+                        ? 'One-off lump sum of $' + fmt(loanExtraResult[loan.id].extra_per_month) + ' applied immediately'
+                        : 'Paying an extra $' + fmt(loanExtraResult[loan.id].extra_per_month) + ' every month'"></div>
                     <div class="grid" style="grid-template-columns:1fr 1fr 1fr;gap:8px;">
                       <div style="text-align:center;">
                         <div style="font-size:11px;color:var(--muted);">New Payoff Date</div>
@@ -5303,6 +5542,7 @@
                 {key:'ai_newsletter_enabled', label:'Weekly Newsletter', desc:'AI-generated spending insights email sent to your inbox.', calls_key:'ai_newsletter_calls_est'},
                 {key:'ai_categorise_enabled', label:'AI Categorisation', desc:'Auto-categorises transactions using your AI provider.', calls_key:'ai_categorise_calls_est'},
                 {key:'ai_payslip_enabled', label:'Payslip AI Extraction', desc:'Extracts gross/tax/super from uploaded payslip PDFs.', calls_key:'ai_payslip_calls_est'},
+                {key:'paper_auto_trade_enabled', label:'AI Trader (Auto-trade)', desc:'Claude automatically analyses and trades the simulated portfolio once a week.', calls_key:'ai_trader_calls_est'},
               ]" :key="feat.key">
                 <div style="padding:10px 12px;background:var(--surf2);border-radius:10px;">
                   <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:6px;">
@@ -6123,7 +6363,15 @@
                 <input type="text" x-model="tripForm.description" placeholder="e.g. Client meeting, Site visit" />
               </div>
               <div>
-                <label class="form-label">Distance (km) *</label>
+                <label class="form-label" style="display:flex;align-items:center;justify-content:space-between;">
+                  <span>Distance (km) *</span>
+                  <button @click="calcTripDistance()" class="btn btn-ghost" style="font-size:11px;padding:2px 8px;height:auto;"
+                    :disabled="tripDistanceLoading || !tripForm.start_location || !tripForm.end_location"
+                    :title="(!tripForm.start_location || !tripForm.end_location) ? 'Fill in start and end locations first' : 'Calculate driving distance'">
+                    <span x-show="!tripDistanceLoading">🗺 Calculate KM</span>
+                    <span x-show="tripDistanceLoading">Calculating…</span>
+                  </button>
+                </label>
                 <input type="number" x-model="tripForm.km" step="0.1" min="0" placeholder="0.0" />
               </div>
               <div>
@@ -6245,6 +6493,313 @@
             </div>
           </template>
 
+        </div>
+      </div>
+
+
+      <!-- ═══ INVESTMENT PROPERTIES PAGE ═══ -->
+      <div x-show="page === 'properties'" x-cloak>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+          <div style="font-size:20px;font-weight:700;">Investment Properties</div>
+          <button @click="propFormShow=true; resetPropForm()" class="btn btn-primary btn-sm">+ Add Property</button>
+        </div>
+
+        <!-- Portfolio summary cards -->
+        <template x-if="propertyPortfolio && propertyPortfolio.count > 0">
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:12px;margin-bottom:16px;">
+            <div class="card" style="padding:14px 16px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Total Value</div>
+              <div style="font-size:18px;font-weight:700;" x-text="'$' + fmt(propertyPortfolio.total_value)"></div>
+            </div>
+            <div class="card" style="padding:14px 16px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Total Equity</div>
+              <div style="font-size:18px;font-weight:700;color:var(--green);" x-text="'$' + fmt(propertyPortfolio.total_equity)"></div>
+            </div>
+            <div class="card" style="padding:14px 16px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Portfolio Yield</div>
+              <div style="font-size:18px;font-weight:700;" x-text="propertyPortfolio.portfolio_yield + '%'"></div>
+            </div>
+            <div class="card" style="padding:14px 16px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Annual Rent</div>
+              <div style="font-size:18px;font-weight:700;" x-text="'$' + fmt(propertyPortfolio.total_annual_rent)"></div>
+            </div>
+            <div class="card" style="padding:14px 16px;">
+              <div style="font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Capital Growth</div>
+              <div style="font-size:18px;font-weight:700;"
+                :style="propertyPortfolio.capital_growth >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                x-text="(propertyPortfolio.capital_growth >= 0 ? '+' : '') + '$' + fmt(Math.abs(propertyPortfolio.capital_growth)) + ' (' + propertyPortfolio.capital_growth_pct + '%)'"></div>
+            </div>
+          </div>
+        </template>
+
+        <!-- Add / Edit property form -->
+        <template x-if="propFormShow">
+          <div class="card" style="margin-bottom:16px;border:1px solid var(--primary,#6366f1);">
+            <div style="font-size:15px;font-weight:700;margin-bottom:14px;" x-text="propEditId ? 'Edit Property' : 'Add Property'"></div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px;margin-bottom:14px;">
+              <div style="grid-column:1/-1;">
+                <label class="form-label">Address *</label>
+                <input type="text" x-model="propForm.address" placeholder="e.g. 12 Smith St, Wollongong NSW 2500" />
+              </div>
+              <div>
+                <label class="form-label">Type</label>
+                <select x-model="propForm.property_type">
+                  <option value="house">House</option>
+                  <option value="unit">Unit / Apartment</option>
+                  <option value="townhouse">Townhouse</option>
+                  <option value="land">Land</option>
+                  <option value="commercial">Commercial</option>
+                </select>
+              </div>
+              <div>
+                <label class="form-label">Purchase Price ($)</label>
+                <input type="number" x-model="propForm.purchase_price_cents" placeholder="e.g. 650000" step="1000" min="0" />
+              </div>
+              <div>
+                <label class="form-label">Purchase Date</label>
+                <input type="date" x-model="propForm.purchase_date" />
+              </div>
+              <div>
+                <label class="form-label">Current Value ($)</label>
+                <input type="number" x-model="propForm.current_value_cents" placeholder="e.g. 720000" step="1000" min="0" />
+              </div>
+              <div>
+                <label class="form-label">Mortgage Balance ($)</label>
+                <input type="number" x-model="propForm.mortgage_outstanding_cents" placeholder="e.g. 480000" step="1000" min="0" />
+              </div>
+              <div>
+                <label class="form-label">Mortgage Rate (% p.a.)</label>
+                <input type="number" x-model="propForm.interest_rate" placeholder="e.g. 6.14" step="0.01" min="0" />
+              </div>
+              <div>
+                <label class="form-label">Weekly Rent ($)</label>
+                <input type="number" x-model="propForm.weekly_rent_cents" placeholder="e.g. 550" step="5" min="0" />
+              </div>
+              <div>
+                <label class="form-label">Ownership % (joint ownership)</label>
+                <input type="number" x-model="propForm.ownership_pct" placeholder="100" step="1" min="1" max="100" />
+              </div>
+              <div style="grid-column:1/-1;">
+                <label class="form-label">Notes</label>
+                <input type="text" x-model="propForm.notes" placeholder="Optional notes" />
+              </div>
+            </div>
+            <div style="display:flex;gap:10px;">
+              <button @click="saveProperty()" class="btn btn-primary btn-sm" :disabled="propSaving || !propForm.address">
+                <span x-show="!propSaving" x-text="propEditId ? 'Update' : 'Save'"></span>
+                <span x-show="propSaving">Saving…</span>
+              </button>
+              <button @click="propFormShow=false; resetPropForm()" class="btn btn-ghost btn-sm">Cancel</button>
+            </div>
+          </div>
+        </template>
+
+        <!-- Empty state -->
+        <template x-if="!propFormShow && properties.length === 0">
+          <div class="card" style="text-align:center;padding:40px 20px;color:var(--muted);">
+            <div style="font-size:40px;margin-bottom:12px;">🏘️</div>
+            <div style="font-size:15px;font-weight:600;margin-bottom:8px;">No properties yet</div>
+            <div style="font-size:13px;margin-bottom:16px;">Track rental yield, equity, and tax-deductible expenses for your investment properties.</div>
+            <button @click="propFormShow=true" class="btn btn-primary btn-sm">Add Your First Property</button>
+          </div>
+        </template>
+
+        <!-- Property cards -->
+        <template x-for="prop in properties" :key="prop.id">
+          <div class="card" style="margin-bottom:14px;">
+            <!-- Header row -->
+            <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div style="flex:1;min-width:0;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:4px;">
+                  <div style="font-size:15px;font-weight:700;" x-text="prop.address"></div>
+                  <div style="font-size:11px;padding:2px 8px;border-radius:10px;font-weight:600;background:rgba(99,102,241,.15);color:#818cf8;text-transform:capitalize;" x-text="prop.property_type"></div>
+                  <div x-show="prop.ownership_pct < 100" style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:600;" x-text="prop.ownership_pct + '% owned'"></div>
+                </div>
+                <!-- Key metrics row -->
+                <div style="display:flex;gap:18px;flex-wrap:wrap;margin-top:8px;">
+                  <div>
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Value</div>
+                    <div style="font-size:15px;font-weight:700;" x-text="'$' + fmt(prop.current_value)"></div>
+                  </div>
+                  <div>
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Equity</div>
+                    <div style="font-size:15px;font-weight:700;color:var(--green);" x-text="'$' + fmt(prop.equity) + ' (' + prop.equity_pct + '%)'"></div>
+                  </div>
+                  <div x-show="prop.mortgage_outstanding > 0">
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Mortgage</div>
+                    <div style="font-size:15px;font-weight:700;" x-text="'$' + fmt(prop.mortgage_outstanding)"></div>
+                    <div style="font-size:11px;color:var(--muted);" x-show="prop.interest_rate > 0" x-text="prop.interest_rate + '% p.a.'"></div>
+                  </div>
+                  <div x-show="prop.weekly_rent > 0">
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Rent</div>
+                    <div style="font-size:15px;font-weight:700;" x-text="'$' + fmt(prop.weekly_rent) + '/wk'"></div>
+                    <div style="font-size:11px;color:var(--muted);" x-text="'Yield: ' + prop.gross_yield + '%'"></div>
+                  </div>
+                  <div x-show="prop.purchase_price > 0">
+                    <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Capital Growth</div>
+                    <div style="font-size:15px;font-weight:700;"
+                      :style="prop.capital_growth >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                      x-text="(prop.capital_growth >= 0 ? '+' : '') + '$' + fmt(Math.abs(prop.capital_growth)) + ' (' + prop.capital_growth_pct + '%)'"></div>
+                  </div>
+                </div>
+                <!-- LVR bar -->
+                <div x-show="prop.mortgage_outstanding > 0 && prop.current_value > 0" style="margin-top:10px;">
+                  <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px;">
+                    <span>LVR</span>
+                    <span x-text="prop.lvr + '%'"></span>
+                  </div>
+                  <div style="height:5px;background:var(--border,#374151);border-radius:3px;overflow:hidden;">
+                    <div style="height:100%;border-radius:3px;transition:width .3s;"
+                      :style="'width:' + Math.min(100, prop.lvr) + '%;background:' + (prop.lvr > 80 ? '#ef4444' : prop.lvr > 60 ? '#f59e0b' : '#22c55e')"></div>
+                  </div>
+                </div>
+              </div>
+              <!-- Actions -->
+              <div style="display:flex;gap:6px;flex-shrink:0;align-items:flex-start;">
+                <button @click="editProperty(prop)" class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px;">Edit</button>
+                <button @click="togglePropExpand(prop.id)" class="btn btn-ghost btn-sm" style="padding:4px 10px;font-size:12px;"
+                  x-text="propExpanded[prop.id] ? '▲ Hide' : '▼ Expenses'"></button>
+              </div>
+            </div>
+
+            <!-- Expanded: expenses + FY summary -->
+            <template x-if="propExpanded[prop.id]">
+              <div style="margin-top:16px;border-top:1px solid var(--border,#374151);padding-top:14px;">
+                <!-- FY selector + summary -->
+                <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+                  <div style="font-size:13px;font-weight:600;">FY</div>
+                  <button @click="propFY--; loadPropExpenses(prop.id); loadPropFySummary(prop.id)" class="btn btn-ghost btn-sm" style="padding:2px 8px;">◀</button>
+                  <span style="font-size:13px;font-weight:700;" x-text="(propFY-1) + '–' + String(propFY).slice(2)"></span>
+                  <button @click="propFY++; loadPropExpenses(prop.id); loadPropFySummary(prop.id)" class="btn btn-ghost btn-sm" style="padding:2px 8px;">▶</button>
+                </div>
+
+                <!-- FY summary card -->
+                <template x-if="propFySummary[prop.id]">
+                  <div style="background:rgba(99,102,241,.06);border-radius:10px;padding:12px 14px;margin-bottom:14px;">
+                    <div style="font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);margin-bottom:10px;" x-text="'FY ' + propFySummary[prop.id].fy + ' Tax Summary'"></div>
+                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin-bottom:10px;">
+                      <div>
+                        <div style="font-size:11px;color:var(--muted);">Est. Rent Income</div>
+                        <div style="font-size:15px;font-weight:700;color:var(--green);" x-text="'$' + fmt(propFySummary[prop.id].rent_income_estimated)"></div>
+                        <div style="font-size:10px;color:var(--muted);" x-text="propFySummary[prop.id].weeks_elapsed + ' wks @ $' + fmt(prop.weekly_rent) + '/wk'"></div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;color:var(--muted);">Deductible Expenses</div>
+                        <div style="font-size:15px;font-weight:700;color:var(--red);" x-text="'-$' + fmt(propFySummary[prop.id].deductible_total)"></div>
+                        <div style="font-size:10px;color:var(--muted);" x-text="propFySummary[prop.id].expense_count + ' items logged'"></div>
+                      </div>
+                      <div>
+                        <div style="font-size:11px;color:var(--muted);">Net Rental Income</div>
+                        <div style="font-size:15px;font-weight:700;"
+                          :style="propFySummary[prop.id].net_rental_income >= 0 ? 'color:var(--green)' : 'color:#f59e0b'"
+                          x-text="(propFySummary[prop.id].net_rental_income >= 0 ? '+' : '') + '$' + fmt(propFySummary[prop.id].net_rental_income)"></div>
+                        <div x-show="propFySummary[prop.id].negatively_geared" style="font-size:10px;color:#f59e0b;">Negatively geared</div>
+                      </div>
+                    </div>
+                    <!-- Expense breakdown by category -->
+                    <template x-if="Object.keys(propFySummary[prop.id].by_category || {}).length > 0">
+                      <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                        <template x-for="[cat, amt] in Object.entries(propFySummary[prop.id].by_category || {})" :key="cat">
+                          <div style="font-size:11px;padding:3px 8px;border-radius:10px;background:var(--border,#374151);">
+                            <span style="text-transform:capitalize;" x-text="cat.replace('_',' ')"></span>
+                            <span style="color:var(--muted);"> $<span x-text="fmt(amt)"></span></span>
+                          </div>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+
+                <!-- Add expense form -->
+                <div style="background:var(--card-bg,#1e2533);border-radius:10px;padding:12px 14px;margin-bottom:12px;">
+                  <div style="font-size:12px;font-weight:600;margin-bottom:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;">Log Expense / Income</div>
+                  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:10px;">
+                    <div>
+                      <label class="form-label" style="font-size:11px;">Date</label>
+                      <input type="date" x-model="propExpenseForm.date" style="font-size:13px;padding:6px 8px;" />
+                    </div>
+                    <div>
+                      <label class="form-label" style="font-size:11px;">Category</label>
+                      <select x-model="propExpenseForm.category" style="font-size:13px;padding:6px 8px;"
+                        @change="propExpenseForm.is_deductible = propExpenseForm.category !== 'other'">
+                        <option value="rent_income">Rent Income</option>
+                        <option value="interest">Mortgage Interest</option>
+                        <option value="rates">Council Rates</option>
+                        <option value="water">Water Rates</option>
+                        <option value="insurance">Insurance</option>
+                        <option value="strata">Strata/Body Corp</option>
+                        <option value="management">Property Management</option>
+                        <option value="repairs">Repairs</option>
+                        <option value="maintenance">Maintenance</option>
+                        <option value="depreciation">Depreciation</option>
+                        <option value="advertising">Advertising</option>
+                        <option value="other">Other</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label class="form-label" style="font-size:11px;">Amount ($)</label>
+                      <input type="number" x-model="propExpenseForm.amount" placeholder="0.00" step="0.01" min="0" style="font-size:13px;padding:6px 8px;" />
+                    </div>
+                    <div>
+                      <label class="form-label" style="font-size:11px;">Description</label>
+                      <input type="text" x-model="propExpenseForm.description" placeholder="Optional" style="font-size:13px;padding:6px 8px;" />
+                    </div>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:12px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);cursor:pointer;">
+                      <input type="checkbox" x-model="propExpenseForm.is_deductible" style="width:14px;height:14px;" />
+                      Tax deductible
+                    </label>
+                    <button @click="addPropExpense(prop.id)" class="btn btn-primary btn-sm" style="padding:5px 14px;font-size:12px;"
+                      :disabled="propExpenseSaving || !propExpenseForm.amount">
+                      <span x-show="!propExpenseSaving">Add</span>
+                      <span x-show="propExpenseSaving">Saving…</span>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Expenses list -->
+                <div x-show="propExpenses[prop.id] && propExpenses[prop.id].length > 0">
+                  <div style="font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;">
+                    Logged Expenses
+                    <span style="color:var(--text);" x-text="'(' + (propExpenses[prop.id]?.length || 0) + ')'"></span>
+                  </div>
+                  <div style="display:flex;flex-direction:column;gap:4px;">
+                    <template x-for="exp in (propExpenses[prop.id] || [])" :key="exp.id">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 10px;background:var(--card-bg,#1e2533);border-radius:8px;">
+                        <div style="display:flex;align-items:center;gap:8px;min-width:0;flex:1;">
+                          <div style="font-size:11px;color:var(--muted);white-space:nowrap;" x-text="exp.date"></div>
+                          <div style="font-size:12px;padding:1px 7px;border-radius:8px;text-transform:capitalize;flex-shrink:0;"
+                            :style="exp.category === 'rent_income' ? 'background:rgba(34,197,94,.15);color:#22c55e' : 'background:var(--border,#374151);'"
+                            x-text="exp.category.replace('_',' ')"></div>
+                          <div style="font-size:12px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-show="exp.description" x-text="exp.description"></div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                          <div style="font-size:13px;font-weight:700;"
+                            :style="exp.category === 'rent_income' ? 'color:var(--green)' : ''"
+                            x-text="(exp.category === 'rent_income' ? '+' : '-') + '$' + fmt(exp.amount)"></div>
+                          <div x-show="exp.is_deductible && exp.category !== 'rent_income'" style="font-size:10px;padding:1px 5px;border-radius:4px;background:rgba(99,102,241,.15);color:#818cf8;">deductible</div>
+                          <button @click="deletePropExpense(prop.id, exp.id)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:14px;padding:0 2px;" title="Remove">×</button>
+                        </div>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+                <div x-show="propExpenses[prop.id] && propExpenses[prop.id].length === 0" style="font-size:13px;color:var(--muted);text-align:center;padding:12px 0;">
+                  No expenses logged for this FY yet.
+                </div>
+              </div>
+            </template>
+
+            <!-- Delete link -->
+            <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+              <button @click="deleteProperty(prop.id)" style="background:none;border:none;color:var(--muted);cursor:pointer;font-size:12px;text-decoration:underline;">Remove property</button>
+            </div>
+          </div>
+        </template>
+
+        <div style="font-size:11px;color:var(--muted);text-align:center;padding:12px 0;">
+          Rental yield, equity, and expense estimates only — consult your accountant for tax advice.
         </div>
       </div>
 
@@ -6469,6 +7024,457 @@
               </div>
             </template>
           </div>
+        </div>
+      </div>
+
+      <!-- ═══ AI TRADER PAGE ═══ -->
+      <div x-show="page === 'paper'" x-cloak>
+        <div style="max-width:900px;">
+
+          <!-- Header -->
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <div style="font-size:22px;font-weight:700;">🤖 AI Trader</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:2px;">Simulated portfolio managed by Claude — paper trades only, no real money</div>
+            </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;">
+              <button @click="paperShowSettings=!paperShowSettings" class="btn" style="font-size:13px;">⚙️ Settings</button>
+              <button @click="paperShowHistory=!paperShowHistory" class="btn" style="font-size:13px;">📋 Analysis History</button>
+              <button @click="runPaperAnalysis()" class="btn btn-primary" :disabled="paperAnalysing" style="min-width:140px;">
+                <span x-show="paperAnalysing">⌛ Analysing…</span>
+                <span x-show="!paperAnalysing">✨ Run Analysis</span>
+              </button>
+            </div>
+          </div>
+
+          <!-- Disclaimer -->
+          <div class="alert" style="background:rgba(99,102,241,0.08);border:1px solid rgba(99,102,241,0.25);border-radius:8px;padding:10px 14px;font-size:12px;color:var(--muted);margin-bottom:16px;">
+            ⚠️ <strong>Simulation only.</strong> This portfolio uses real market prices but no real money is ever invested. Results are for entertainment and education purposes only.
+          </div>
+
+          <!-- Error -->
+          <div x-show="paperError" class="alert alert-error" x-text="paperError" style="margin-bottom:16px;"></div>
+
+          <!-- No portfolio yet -->
+          <template x-if="!paperPortfolio || !paperPortfolio.exists">
+            <div class="card" style="padding:32px;text-align:center;">
+              <div style="font-size:40px;margin-bottom:12px;">🤖</div>
+              <div style="font-size:17px;font-weight:600;margin-bottom:8px;">No portfolio yet</div>
+              <div style="font-size:13px;color:var(--muted);margin-bottom:20px;">Start a $1,000 simulated portfolio. Claude will manage it with an aggressive growth strategy across ASX and US markets.</div>
+              <button @click="createPaperPortfolio()" class="btn btn-primary">🚀 Start Portfolio ($1,000)</button>
+            </div>
+          </template>
+
+          <!-- Portfolio exists -->
+          <template x-if="paperPortfolio && paperPortfolio.exists">
+            <div>
+
+              <!-- Stats row -->
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px;margin-bottom:16px;">
+                <div class="card-sm" style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Total Value</div>
+                  <div style="font-size:18px;font-weight:700;" x-text="'$'+fmt(paperPortfolio.total_value_aud)"></div>
+                </div>
+                <div class="card-sm" style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Cash</div>
+                  <div style="font-size:18px;font-weight:700;" x-text="'$'+fmt(paperPortfolio.cash_aud)"></div>
+                </div>
+                <div class="card-sm" style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">Return</div>
+                  <div style="font-size:18px;font-weight:700;"
+                    :style="paperPortfolio.return_pct >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                    x-text="(paperPortfolio.return_pct >= 0 ? '+' : '') + fmt(paperPortfolio.return_pct) + '%'"></div>
+                </div>
+                <div class="card-sm" style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">vs ASX 200 (1W)</div>
+                  <div style="font-size:18px;font-weight:700;"
+                    :style="(paperPortfolio.asx200_w1_pct ?? 0) >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                    x-text="paperPortfolio.asx200_w1_pct != null ? (paperPortfolio.asx200_w1_pct >= 0 ? '+' : '') + paperPortfolio.asx200_w1_pct + '%' : '—'"></div>
+                </div>
+                <div class="card-sm" style="text-align:center;">
+                  <div style="font-size:11px;color:var(--muted);margin-bottom:4px;">vs S&amp;P 500 (1W)</div>
+                  <div style="font-size:18px;font-weight:700;"
+                    :style="(paperPortfolio.sp500_w1_pct ?? 0) >= 0 ? 'color:var(--green)' : 'color:var(--red)'"
+                    x-text="paperPortfolio.sp500_w1_pct != null ? (paperPortfolio.sp500_w1_pct >= 0 ? '+' : '') + paperPortfolio.sp500_w1_pct + '%' : '—'"></div>
+                </div>
+              </div>
+
+              <!-- Analysis history panel -->
+              <div x-show="paperShowHistory" style="margin-bottom:16px;">
+                <div class="card" style="padding:16px;">
+                  <div style="font-size:14px;font-weight:600;margin-bottom:12px;">📋 Analysis History</div>
+                  <template x-if="paperAnalysisDetail">
+                    <div>
+                      <button @click="paperAnalysisDetail=null" class="btn" style="font-size:12px;margin-bottom:12px;">← Back to list</button>
+                      <div style="font-size:12px;color:var(--muted);margin-bottom:8px;" x-text="'Generated: ' + new Date(paperAnalysisDetail.created_at).toLocaleString('en-AU')"></div>
+                      <div class="advisor-report" style="font-size:13px;line-height:1.7;" x-html="renderAdvisorMarkdown(paperAnalysisDetail.analysis_text)"></div>
+                      <template x-if="paperAnalysisDetail.trades && paperAnalysisDetail.trades.length > 0">
+                        <div style="margin-top:12px;">
+                          <div style="font-size:13px;font-weight:600;margin-bottom:8px;">Trades executed:</div>
+                          <template x-for="t in paperAnalysisDetail.trades" :key="t.id">
+                            <div style="display:flex;gap:8px;align-items:center;font-size:12px;padding:4px 0;border-bottom:1px solid var(--border);">
+                              <span :style="t.side==='BUY'?'color:var(--green);font-weight:600':'color:var(--red);font-weight:600'" x-text="t.side"></span>
+                              <span x-text="t.qty + ' × ' + t.ticker"></span>
+                              <span style="color:var(--muted);" x-text="'@ $' + fmt(t.price_aud)"></span>
+                              <span style="color:var(--muted);flex:1;" x-text="t.reason ? '— ' + t.reason.substring(0,80) : ''"></span>
+                            </div>
+                          </template>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!paperAnalysisDetail">
+                    <div>
+                      <template x-if="paperAnalysis.length === 0">
+                        <div style="font-size:13px;color:var(--muted);text-align:center;padding:16px;">No analyses yet — click Run Analysis to start.</div>
+                      </template>
+                      <template x-for="a in paperAnalysis" :key="a.id">
+                        <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);cursor:pointer;" @click="loadPaperAnalysisDetail(a.id)">
+                          <div>
+                            <div style="font-size:13px;font-weight:500;" x-text="new Date(a.created_at).toLocaleString('en-AU',{dateStyle:'medium',timeStyle:'short'})"></div>
+                            <div style="font-size:12px;color:var(--muted);" x-text="a.trades_count + ' trade' + (a.trades_count !== 1 ? 's' : '') + ' executed'"></div>
+                          </div>
+                          <span style="color:var(--muted);font-size:14px;">›</span>
+                        </div>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- Latest Analysis -->
+              <template x-if="!paperShowHistory && paperAnalysis.length > 0">
+                <div class="card" style="padding:16px;margin-bottom:16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+                    <div style="font-size:14px;font-weight:600;">🧠 Latest Analysis</div>
+                    <div style="font-size:12px;color:var(--muted);" x-text="'Generated: ' + new Date(paperAnalysis[0].created_at).toLocaleString('en-AU',{dateStyle:'medium',timeStyle:'short'})"></div>
+                  </div>
+                  <div class="advisor-report" style="font-size:13px;line-height:1.7;"
+                    x-html="renderAdvisorMarkdown(paperAnalysis[0].analysis_preview + (paperAnalysis[0].analysis_preview?.length >= 300 ? '…' : ''))"></div>
+                  <button @click="paperShowHistory=true; loadPaperAnalysisDetail(paperAnalysis[0].id)" class="btn" style="margin-top:10px;font-size:12px;">View full analysis →</button>
+                </div>
+              </template>
+
+              <!-- Holdings -->
+              <div class="card" style="padding:16px;margin-bottom:16px;">
+                <div style="font-size:14px;font-weight:600;margin-bottom:12px;">📊 Holdings</div>
+                <template x-if="paperHoldings.length === 0">
+                  <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px;">No holdings yet — cash only.</div>
+                </template>
+                <template x-if="paperHoldings.length > 0">
+                  <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                      <thead>
+                        <tr style="border-bottom:2px solid var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;">
+                          <th style="text-align:left;padding:6px 8px;">Ticker</th>
+                          <th style="text-align:right;padding:6px 8px;">Qty</th>
+                          <th style="text-align:right;padding:6px 8px;">Avg Cost</th>
+                          <th style="text-align:right;padding:6px 8px;">Price</th>
+                          <th style="text-align:right;padding:6px 8px;">Value</th>
+                          <th style="text-align:right;padding:6px 8px;">Gain</th>
+                          <th style="text-align:right;padding:6px 8px;">Gain %</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="h in paperHoldings" :key="h.id">
+                          <tr style="border-bottom:1px solid var(--border);">
+                            <td style="padding:8px;font-weight:600;" x-text="h.ticker"></td>
+                            <td style="padding:8px;text-align:right;" x-text="h.qty"></td>
+                            <td style="padding:8px;text-align:right;" x-text="'$'+fmt(h.avg_cost_aud)"></td>
+                            <td style="padding:8px;text-align:right;" x-text="'$'+fmt(h.current_price_aud)"></td>
+                            <td style="padding:8px;text-align:right;font-weight:600;" x-text="'$'+fmt(h.value_aud)"></td>
+                            <td style="padding:8px;text-align:right;" :style="h.gain_aud>=0?'color:var(--green)':'color:var(--red)'" x-text="(h.gain_aud>=0?'+':'')+'$'+fmt(Math.abs(h.gain_aud))"></td>
+                            <td style="padding:8px;text-align:right;" :style="h.gain_pct>=0?'color:var(--green)':'color:var(--red)'" x-text="(h.gain_pct>=0?'+':'')+fmt(h.gain_pct)+'%'"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Trade History -->
+              <div class="card" style="padding:16px;margin-bottom:16px;">
+                <div style="font-size:14px;font-weight:600;margin-bottom:12px;">📜 Trade History</div>
+                <template x-if="!paperTrades || paperTrades.items?.length === 0">
+                  <div style="font-size:13px;color:var(--muted);text-align:center;padding:12px;">No trades yet.</div>
+                </template>
+                <template x-if="paperTrades && paperTrades.items?.length > 0">
+                  <div style="overflow-x:auto;">
+                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                      <thead>
+                        <tr style="border-bottom:2px solid var(--border);color:var(--muted);font-size:11px;text-transform:uppercase;">
+                          <th style="text-align:left;padding:6px 8px;">Date</th>
+                          <th style="text-align:center;padding:6px 8px;">Side</th>
+                          <th style="text-align:left;padding:6px 8px;">Ticker</th>
+                          <th style="text-align:right;padding:6px 8px;">Qty</th>
+                          <th style="text-align:right;padding:6px 8px;">Price</th>
+                          <th style="text-align:right;padding:6px 8px;">Brokerage</th>
+                          <th style="text-align:right;padding:6px 8px;">Total</th>
+                          <th style="text-align:left;padding:6px 8px;">Rationale</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="t in paperTrades.items" :key="t.id">
+                          <tr style="border-bottom:1px solid var(--border);">
+                            <td style="padding:6px 8px;white-space:nowrap;" x-text="t.executed_at?.substring(0,10)"></td>
+                            <td style="padding:6px 8px;text-align:center;">
+                              <span :style="t.side==='BUY'?'background:rgba(34,197,94,0.15);color:var(--green);':'background:rgba(239,68,68,0.15);color:var(--red);'" style="padding:2px 6px;border-radius:4px;font-size:10px;font-weight:700;" x-text="t.side"></span>
+                            </td>
+                            <td style="padding:6px 8px;font-weight:600;" x-text="t.ticker"></td>
+                            <td style="padding:6px 8px;text-align:right;" x-text="t.qty"></td>
+                            <td style="padding:6px 8px;text-align:right;" x-text="'$'+fmt(t.price_aud)"></td>
+                            <td style="padding:6px 8px;text-align:right;color:var(--muted);" x-text="'$'+fmt(t.brokerage_aud)"></td>
+                            <td style="padding:6px 8px;text-align:right;font-weight:600;"
+                              :style="t.side==='SELL'?'color:var(--green)':'color:var(--red)'"
+                              x-text="(t.side==='SELL'?'+':'-')+'$'+fmt(Math.abs(t.total_aud))"></td>
+                            <td style="padding:6px 8px;color:var(--muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" :title="t.reason" x-text="t.reason || '—'"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </template>
+              </div>
+
+              <!-- Settings panel -->
+              <div x-show="paperShowSettings" class="card" style="padding:16px;margin-bottom:16px;">
+                <div style="font-size:14px;font-weight:600;margin-bottom:12px;">⚙️ Portfolio Settings</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+                  <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Starting Capital</label>
+                    <div style="font-size:14px;font-weight:600;" x-text="'$' + fmt(paperPortfolio.starting_cash)"></div>
+                  </div>
+                  <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Strategy</label>
+                    <div style="font-size:14px;font-weight:600;" x-text="paperPortfolio.strategy"></div>
+                  </div>
+                  <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Markets</label>
+                    <div style="font-size:14px;font-weight:600;" x-text="paperPortfolio.markets"></div>
+                  </div>
+                  <div>
+                    <label style="font-size:12px;color:var(--muted);display:block;margin-bottom:4px;">Created</label>
+                    <div style="font-size:14px;" x-text="paperPortfolio.created_at?.substring(0,10)"></div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:8px;flex-wrap:wrap;padding-top:12px;border-top:1px solid var(--border);">
+                  <button @click="if(confirm('Reset portfolio? All trades and holdings will be deleted.')) resetPaperPortfolio()" class="btn" style="font-size:12px;color:var(--red);">⚠️ Reset Portfolio</button>
+                </div>
+              </div>
+
+            </div>
+          </template>
+
+        </div>
+      </div>
+
+      <!-- ═══ SECURITY PAGE ═══ -->
+      <div x-show="page === 'security'" x-cloak>
+        <div style="max-width:800px;">
+
+          <!-- Header -->
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:12px;">
+            <div>
+              <div style="font-size:22px;font-weight:700;">🔒 Security</div>
+              <div style="font-size:13px;color:var(--muted);margin-top:2px;">Monitor access, audit your app, and manage sessions</div>
+            </div>
+            <button @click="loadSecurityAudit(); loadSecurityHistory(); loadSecuritySessions()" class="btn" style="font-size:13px;">↻ Refresh</button>
+          </div>
+
+          <!-- Security Health -->
+          <div class="card" style="margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-weight:600;font-size:15px;">Security Health</div>
+              <div x-show="securityAudit" style="font-size:13px;color:var(--muted);"
+                x-text="securityAudit ? (securityAudit.passed + '/' + securityAudit.total + ' checks passed') : ''"></div>
+            </div>
+            <div x-show="securityLoading" style="text-align:center;padding:24px;color:var(--muted);font-size:13px;">Checking…</div>
+            <div x-show="!securityLoading && !securityAudit" style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No audit data yet</div>
+            <div x-show="securityAudit && !securityLoading">
+              <!-- Score bar -->
+              <div x-show="securityAudit" style="margin-bottom:14px;">
+                <div style="background:var(--surf2);border-radius:6px;height:8px;overflow:hidden;">
+                  <div :style="`width:${securityAudit ? (securityAudit.passed/securityAudit.total*100) : 0}%;height:100%;background:${securityAudit && securityAudit.failed > 0 ? '#ef4444' : securityAudit && securityAudit.warned > 0 ? '#f59e0b' : '#22c55e'};border-radius:6px;transition:width .4s`"></div>
+                </div>
+              </div>
+              <template x-for="check in (securityAudit?.checks || [])" :key="check.id">
+                <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);" :style="check === securityAudit.checks[securityAudit.checks.length-1] ? 'border-bottom:none' : ''">
+                  <span style="font-size:16px;line-height:1.4;" x-text="check.status === 'pass' ? '✅' : check.status === 'warn' ? '⚠️' : '❌'"></span>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:13px;font-weight:600;" x-text="check.label"></div>
+                    <div style="font-size:12px;color:var(--muted);margin-top:2px;" x-text="check.detail"></div>
+                  </div>
+                </div>
+              </template>
+              <div x-show="securityAudit" style="font-size:11px;color:var(--muted);margin-top:10px;"
+                x-text="securityAudit ? 'Last checked: ' + new Date(securityAudit.checked_at).toLocaleString() : ''"></div>
+            </div>
+          </div>
+
+          <!-- Alert Settings -->
+          <div class="card" style="margin-bottom:14px;">
+            <div style="font-weight:600;font-size:15px;margin-bottom:12px;">Alert Settings</div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Security alert notifications</div>
+                <div style="font-size:12px;color:var(--muted);">Push alert to your devices on suspicious activity</div>
+              </div>
+              <label style="cursor:pointer;display:flex;align-items:center;gap:6px;">
+                <input type="checkbox" :checked="securitySettings.security_alerts_enabled === '1'"
+                  @change="securitySettings.security_alerts_enabled = $event.target.checked ? '1' : '0'; saveSecuritySettings()">
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Failed attempts before alert</div>
+                <div style="font-size:12px;color:var(--muted);">Number of login failures from one IP that triggers a notification</div>
+              </div>
+              <input type="number" min="2" max="20" style="width:64px;text-align:center;"
+                class="input" :value="securitySettings.security_fail_threshold"
+                @change="securitySettings.security_fail_threshold = $event.target.value; saveSecuritySettings()">
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Notify on password change</div>
+                <div style="font-size:12px;color:var(--muted);">Alert if any account password is changed</div>
+              </div>
+              <label style="cursor:pointer;">
+                <input type="checkbox" :checked="securitySettings.security_notify_password_change === '1'"
+                  @change="securitySettings.security_notify_password_change = $event.target.checked ? '1' : '0'; saveSecuritySettings()">
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Notify on settings change</div>
+                <div style="font-size:12px;color:var(--muted);">Alert if sensitive settings (API keys, tokens) are updated</div>
+              </div>
+              <label style="cursor:pointer;">
+                <input type="checkbox" :checked="securitySettings.security_notify_settings_change === '1'"
+                  @change="securitySettings.security_notify_settings_change = $event.target.checked ? '1' : '0'; saveSecuritySettings()">
+              </label>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Session lifetime (days)</div>
+                <div style="font-size:12px;color:var(--muted);">New sessions expire after this many days regardless of activity</div>
+              </div>
+              <input type="number" min="1" max="90" style="width:64px;text-align:center;" class="input"
+                :value="securitySettings.session_ttl_days"
+                @change="securitySettings.session_ttl_days = $event.target.value; saveSecuritySettings()">
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:8px 0;">
+              <div>
+                <div style="font-size:13px;font-weight:500;">Inactivity timeout (hours)</div>
+                <div style="font-size:12px;color:var(--muted);">Sessions expire if not used for this long (default 24h)</div>
+              </div>
+              <input type="number" min="1" max="720" style="width:64px;text-align:center;" class="input"
+                :value="securitySettings.session_inactivity_hours"
+                @change="securitySettings.session_inactivity_hours = $event.target.value; saveSecuritySettings()">
+            </div>
+          </div>
+
+          <!-- Active Sessions -->
+          <div class="card" style="margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+              <div style="font-weight:600;font-size:15px;">Active Sessions</div>
+              <div style="display:flex;gap:6px;">
+                <button @click="purgeExpiredSessions()" class="btn" style="font-size:12px;color:var(--muted);">
+                  Clean Up Expired
+                </button>
+                <button @click="revokeAllOtherSessions()" class="btn" style="font-size:12px;color:#ef4444;"
+                  x-show="securitySessions.filter(s => !s.is_current).length > 0">
+                  Revoke All Others
+                </button>
+              </div>
+            </div>
+            <div x-show="securitySessionsLoading" style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">Loading…</div>
+            <div x-show="!securitySessionsLoading && securitySessions.length === 0" style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No active sessions</div>
+            <template x-for="(s, i) in securitySessions" :key="s.token">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 0;"
+                :style="i < securitySessions.length - 1 ? 'border-bottom:1px solid var(--border)' : ''">
+                <div style="flex:1;min-width:0;">
+                  <div style="font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;">
+                    <span x-text="s.user_name"></span>
+                    <span x-show="s.is_current" style="font-size:10px;background:var(--acc-soft);color:var(--accent);padding:1px 6px;border-radius:10px;">Current</span>
+                  </div>
+                  <div style="font-size:11px;color:var(--muted);margin-top:2px;">
+                    Started <span x-text="new Date(s.created_at).toLocaleString()"></span>
+                    · Expires <span x-text="new Date(s.expires_at).toLocaleDateString()"></span>
+                  </div>
+                </div>
+                <button x-show="!s.is_current" @click="revokeSession(s.token)"
+                  class="btn" style="font-size:12px;color:#ef4444;padding:4px 10px;margin-left:8px;">
+                  Revoke
+                </button>
+              </div>
+            </template>
+          </div>
+
+          <!-- Login History -->
+          <div class="card" style="margin-bottom:14px;">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+              <div style="font-weight:600;font-size:15px;">Login History</div>
+              <button x-show="securityHistory.length > 0" @click="clearLoginHistory()" class="btn" style="font-size:12px;color:var(--muted);">Clear</button>
+            </div>
+            <div x-show="securityHistoryLoading" style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">Loading…</div>
+            <div x-show="!securityHistoryLoading && securityHistory.length === 0" style="text-align:center;padding:16px;color:var(--muted);font-size:13px;">No login history yet</div>
+            <div x-show="securityHistory.length > 0" style="overflow-x:auto;">
+              <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                <thead>
+                  <tr style="color:var(--muted);text-align:left;">
+                    <th style="padding:6px 8px;font-weight:600;white-space:nowrap;"></th>
+                    <th style="padding:6px 8px;font-weight:600;white-space:nowrap;">User</th>
+                    <th style="padding:6px 8px;font-weight:600;white-space:nowrap;">IP Address</th>
+                    <th style="padding:6px 8px;font-weight:600;white-space:nowrap;">Time</th>
+                    <th style="padding:6px 8px;font-weight:600;white-space:nowrap;">Result</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(entry, i) in securityHistory.slice(0, 50)" :key="entry.id">
+                    <tr :style="i % 2 === 0 ? 'background:var(--surf)' : 'background:var(--bg)'">
+                      <td style="padding:6px 8px;font-size:14px;" x-text="entry.success ? '✅' : '❌'"></td>
+                      <td style="padding:6px 8px;" x-text="entry.username || '—'"></td>
+                      <td style="padding:6px 8px;font-family:monospace;" x-text="entry.ip_address || '—'"></td>
+                      <td style="padding:6px 8px;white-space:nowrap;" x-text="new Date(entry.created_at).toLocaleString()"></td>
+                      <td style="padding:6px 8px;" :style="entry.success ? 'color:#22c55e' : 'color:#ef4444'"
+                        x-text="entry.success ? 'Success' : (entry.reason === 'locked_out' ? 'Locked out' : entry.reason === 'user_not_found' ? 'Unknown user' : 'Wrong password')"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+              <div x-show="securityHistory.length > 50" style="font-size:12px;color:var(--muted);padding:8px;text-align:center;"
+                x-text="`Showing 50 of ${securityHistory.length} entries`"></div>
+            </div>
+          </div>
+
+          <!-- API Key Vault -->
+          <div class="card" style="margin-bottom:14px;">
+            <div style="font-weight:600;font-size:15px;margin-bottom:12px;">API Key Vault</div>
+            <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Keys are never shown — only configuration status is displayed here.</div>
+            <template x-for="keyInfo in [
+              { key: 'anthropic_api_key',    label: 'Anthropic API Key',    icon: '🤖' },
+              { key: 'gemini_api_key',       label: 'Google Gemini Key',    icon: '🔮' },
+              { key: 'gmail_app_password',   label: 'Gmail App Password',   icon: '📧' },
+              { key: 'ha_token',             label: 'HA Long-Lived Token',  icon: '🏠' },
+              { key: 'binance_api_key',      label: 'Binance API Key',      icon: '₿' },
+              { key: 'binance_api_secret',   label: 'Binance API Secret',   icon: '₿' },
+              { key: 'stake_session_token',  label: 'Stake Session Token',  icon: '📈' },
+            ]" :key="keyInfo.key">
+              <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 0;border-bottom:1px solid var(--border);"
+                :style="keyInfo.key === 'stake_session_token' ? 'border-bottom:none' : ''">
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <span style="font-size:15px;" x-text="keyInfo.icon"></span>
+                  <span style="font-size:13px;" x-text="keyInfo.label"></span>
+                </div>
+                <span style="font-size:12px;font-weight:600;"
+                  :style="settings && settings[keyInfo.key] && settings[keyInfo.key] !== '' ? 'color:#22c55e' : 'color:var(--muted)'"
+                  x-text="settings && settings[keyInfo.key] && settings[keyInfo.key] !== '' ? '✅ Configured' : '— Not set'">
+                </span>
+              </div>
+            </template>
+          </div>
+
         </div>
       </div>
 
@@ -6810,6 +7816,9 @@
     <button class="more-item" @click="page='loans'; moreOpen=false; loadLoans()">
       <span>🏠</span><span>Loans</span>
     </button>
+    <button class="more-item" @click="page='properties'; moreOpen=false; loadProperties()">
+      <span>🏘️</span><span>Properties</span>
+    </button>
     <button class="more-item" @click="page='investments'; moreOpen=false">
       <span>🏦</span><span>Investments</span>
     </button>
@@ -6834,8 +7843,14 @@
     <button class="more-item" @click="page='pulse'; moreOpen=false">
       <span>📡</span><span>Market Pulse</span>
     </button>
+    <button class="more-item" @click="page='paper'; moreOpen=false; loadPaperPortfolio(); loadPaperHoldings(); loadPaperTrades(); loadPaperAnalysis()">
+      <span>🤖</span><span>AI Trader</span>
+    </button>
     <button class="more-item" @click="page='advisor'; moreOpen=false; loadAdvisorReport()">
       <span>🤝</span><span>Advisor</span>
+    </button>
+    <button class="more-item" @click="page='security'; moreOpen=false; loadSecurityAudit(); loadSecurityHistory(); loadSecuritySessions(); loadSecuritySettings()">
+      <span>🔒</span><span>Security</span>
     </button>
     <button class="more-item" @click="page='pet'; moreOpen=false">
       <span>🐾</span><span>Finance Pet</span>
@@ -7908,6 +8923,10 @@
                 <input type="checkbox" x-model="wizardData.aiNewsletter" style="width:16px;height:16px;cursor:pointer;">
                 <div><div style="font-size:13px;font-weight:500;">Weekly newsletter</div><div style="font-size:11px;color:var(--muted);">AI-written summary of your financial week, pushed to HA</div></div>
               </label>
+              <label style="display:flex;align-items:center;gap:12px;cursor:pointer;padding:10px 12px;background:var(--surf2);border-radius:10px;border:1px solid var(--border);">
+                <input type="checkbox" x-model="wizardData.aiTrader" style="width:16px;height:16px;cursor:pointer;">
+                <div><div style="font-size:13px;font-weight:500;">AI Trader (auto-trade)</div><div style="font-size:11px;color:var(--muted);">Claude manages a simulated $1,000 portfolio weekly — paper trades only, no real money</div></div>
+              </label>
             </div>
           </div>
         </div>
@@ -8250,6 +9269,7 @@ function app() {
       { id: 'bills', label: 'Bills', icon: '📅' },
       { id: 'calendar', label: 'Calendar', icon: '🗓️' },
       { id: 'loans', label: 'Loans', icon: '🏠' },
+      { id: 'properties', label: 'Properties', icon: '🏘️' },
       { id: 'flags', label: 'Review Queue', icon: '🚩' },
       { id: 'insights', label: 'Insights', icon: '✨' },
       { id: 'payslips', label: 'Payslips', icon: '💼' },
@@ -8262,10 +9282,25 @@ function app() {
       { id: 'reports', label: 'Reports', icon: '📋' },
       { id: 'pulse', label: 'Market Pulse', icon: '📡' },
       { id: 'advisor', label: 'Financial Advisor', icon: '🤝' },
+      { id: 'paper', label: 'AI Trader', icon: '🤖' },
+      { id: 'security', label: 'Security', icon: '🔒' },
       { id: 'chathistory', label: 'Chat History', icon: '💬' },
       { id: 'pet', label: 'Finance Pet', icon: '🐾' },
       { id: 'setup', label: 'Setup Guide', icon: '🚀' },
     ],
+
+    // AI Trader (paper trading)
+    paperPortfolio: null,
+    paperHoldings: [],
+    paperTrades: [],
+    paperAnalysis: [],
+    paperAnalysisDetail: null,
+    paperPerformance: [],
+    paperLoading: false,
+    paperAnalysing: false,
+    paperError: '',
+    paperShowHistory: false,
+    paperShowSettings: false,
 
     // Receipt OCR
     ocrFile: null,
@@ -8298,6 +9333,7 @@ function app() {
     loanExtraInput: {},
     loanExtraResult: {},
     loanExtraLoading: {},
+    loanExtraMode: {},   // 'monthly' | 'lumpsum' per loan id
     loanPayments: {},          // { [loanId]: [{...}] }
     loanPaymentFormId: null,   // which loan's payment form is open
     loanPaymentForm: { payment_date: new Date().toISOString().slice(0,10), amount: '', principal: '', interest: '', notes: '' },
@@ -8313,6 +9349,7 @@ function app() {
     dashDataCurrency: null,
     trendRaw: [],
     trendMonths: 6,
+    dashSavingsRate: null,
     trendCustom: false,
     trendStart: '',
     trendEnd: '',
@@ -8404,11 +9441,11 @@ function app() {
     wizardBillAdded: false,
     wizardGoalAdded: false,
     wizardData: {
-      accountName: '', accountBank: 'Macquarie',
+      accountName: '', accountBank: '',
       billName: '', billAmount: '', billFreq: 'monthly',
       goalName: '', goalTarget: '',
       loanName: '', loanType: 'mortgage', loanOutstanding: '', loanRate: '', loanRepayment: '', loanOffset: '',
-      aiCategorise: true, aiOcr: true, aiGmail: true, aiPayslip: true, aiNewsletter: true,
+      aiCategorise: true, aiOcr: true, aiGmail: true, aiPayslip: true, aiNewsletter: true, aiTrader: false,
       apiKey: '', notifyTarget: '',
       gmailPayslipLabel: '', gmailExpenseLabel: '',
     },
@@ -8480,12 +9517,19 @@ function app() {
     enriching: false,
     enrichResult: null,
     zbbSummary: null,
+    budgetForecast: null,
 
     // Forms
     importFile: null,
     importAccountId: null,
     importResult: '',
     importError: '',
+    importDetectedAccount: null,   // { account_id, account_name, confidence }
+    importSuggestCreate: null,     // suggested account name when no match found
+    importCreatingAccount: false,
+    transferCandidates: [],
+    transferCandidatesLoading: false,
+    dismissedTransfers: [],
     newAccount: { name: '', account_number: '' },
     accountEditId: null,
     accountEditName: '',
@@ -8544,6 +9588,7 @@ function app() {
     stakeStatus: null,
     portfolioBenchmark: null,
     benchmarkLoading: false,
+    taxLossAlerts: null,
 
     // Folder watcher
     folderWatchStatus: null,
@@ -8558,6 +9603,21 @@ function app() {
     tripSaving: false,
     tripsLoading: false,
     tripGeoLoading: { start: false, end: false },
+    tripDistanceLoading: false,
+
+    // Investment Properties
+    properties: [],
+    propertyPortfolio: null,
+    propFormShow: false,
+    propEditId: null,
+    propForm: { address: '', property_type: 'house', purchase_price_cents: '', purchase_date: '', current_value_cents: '', mortgage_outstanding_cents: '', interest_rate: '', weekly_rent_cents: '', ownership_pct: '100', notes: '' },
+    propSaving: false,
+    propExpanded: {},       // { [property_id]: bool }
+    propExpenses: {},       // { [property_id]: [] }
+    propFySummary: {},      // { [property_id]: summary }
+    propExpenseForm: { property_id: null, date: new Date().toISOString().split('T')[0], category: 'management', description: '', amount: '', is_deductible: true },
+    propExpenseSaving: false,
+    propFY: new Date().getMonth() >= 6 ? new Date().getFullYear() + 1 : new Date().getFullYear(),
 
     // Receipts
     receiptUploading: false,
@@ -8635,6 +9695,13 @@ function app() {
     advisorError: '',
     advisorSessionId: null,
     advisorUserContext: '',
+    securityAudit: null,
+    securityHistory: [],
+    securitySessions: [],
+    securitySettings: { security_alerts_enabled: '1', security_fail_threshold: '5', security_notify_password_change: '1', security_notify_settings_change: '1', session_ttl_days: '7', session_inactivity_hours: '24' },
+    securityLoading: false,
+    securityHistoryLoading: false,
+    securitySessionsLoading: false,
     advisorShowContext: false,
     advisorChat: [],
     advisorChatInput: '',
@@ -9321,6 +10388,7 @@ function app() {
           return;
         }
         const data = await res.json();
+        if (data.date_warning) this.showToast('⚠ Date corrected: ' + data.date_warning, 8000);
         this.showToast(data.flag_count > 0 ? `Payslip added — ${data.flag_count} issue(s) flagged` : 'Payslip added successfully');
         await this.loadPayslips();
       } finally {
@@ -9716,11 +10784,12 @@ function app() {
           }
           // Save AI feature toggles
           const toggles = {
-            ai_categorise_enabled: this.wizardData.aiCategorise ? '1' : '0',
-            ai_ocr_enabled:        this.wizardData.aiOcr        ? '1' : '0',
-            ai_gmail_enabled:      this.wizardData.aiGmail      ? '1' : '0',
-            ai_payslip_enabled:    this.wizardData.aiPayslip    ? '1' : '0',
-            ai_newsletter_enabled: this.wizardData.aiNewsletter ? '1' : '0',
+            ai_categorise_enabled:   this.wizardData.aiCategorise ? '1' : '0',
+            ai_ocr_enabled:          this.wizardData.aiOcr        ? '1' : '0',
+            ai_gmail_enabled:        this.wizardData.aiGmail      ? '1' : '0',
+            ai_payslip_enabled:      this.wizardData.aiPayslip    ? '1' : '0',
+            ai_newsletter_enabled:   this.wizardData.aiNewsletter ? '1' : '0',
+            paper_auto_trade_enabled: this.wizardData.aiTrader    ? '1' : '0',
           };
           for (const [key, value] of Object.entries(toggles)) {
             await this.api('/api/settings', { method: 'POST', body: JSON.stringify({ key, value }) });
@@ -9828,12 +10897,16 @@ function app() {
       this.loadFlaggedTxns();
       this.loadTaxSummary();
       this.loadBasiqStatus();
+      this.api('/api/goals/savings-rate').then(d => { this.dashSavingsRate = d; }).catch(() => {});
       this.loadGmailStatus();
 
       // Auto-open setup wizard for new users with no accounts
       if (!this.accounts.length && !localStorage.getItem('ft_setup_done')) {
         this.page = 'setup';
       }
+
+      // Auto-refresh all prices/data silently in background on first open each day
+      this._maybeRefreshAllData();
 
       // PWA install prompt
       window.addEventListener('beforeinstallprompt', (e) => {
@@ -9860,7 +10933,8 @@ function app() {
         if (p === 'payslips') this.loadPayslips();
         if (p === 'merchants') this.loadMerchants();
         if (p === 'crypto') this.loadCrypto();
-        if (p === 'investments') { this.loadInvestments(); this.loadCgt(); this.loadDividends(); this.loadBenchmark(); }
+        if (p === 'investments') { this.loadInvestments(); this.loadCgt(); this.loadDividends(); this.loadBenchmark(); this.loadTaxLossAlerts(); }
+        if (p === 'properties') { this.loadProperties(); }
         if (p === 'goals') { this.loadGoals(); this.loadScore(); this.loadAchievements(); this.loadStreaks(); this.loadChallenges(); this.loadSavingsRate(); }
         if (p === 'networth') this.loadNetWorth();
         if (p === 'super') this.loadSuper();
@@ -9871,6 +10945,8 @@ function app() {
         if (p === 'reports') this.loadReport();
         if (p === 'pulse') this.loadPulse();
         if (p === 'advisor') this.loadAdvisorReport();
+        if (p === 'security') { this.loadSecurityAudit(); this.loadSecurityHistory(); this.loadSecuritySessions(); this.loadSecuritySettings(); }
+        if (p === 'paper') { this.loadPaperPortfolio(); this.loadPaperHoldings(); this.loadPaperTrades(); this.loadPaperAnalysis(); }
         if (p === 'chathistory') this.loadChatConversations();
         if (p === 'trips') { this.loadTrips(); this.loadTripSummary(); }
         if (p === 'tax') this.loadTripSummary();
@@ -9879,10 +10955,45 @@ function app() {
       // Hash routing: navigate to page from URL on load (supports email deep links)
       const VALID_PAGES = ['dashboard','transactions','merchants','import','categories',
         'budgets','tax','bills','flags','insights','payslips','crypto','investments',
-        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet','reports','advisor','loans','calendar'];
+        'networth','super','goals','settings','sortswipe','chathistory','pulse','pet','reports','advisor','security','loans','calendar','paper'];
       const hash = window.location.hash.slice(1);
       if (hash && VALID_PAGES.includes(hash)) {
         this.page = hash;
+      }
+    },
+
+    async _maybeRefreshAllData() {
+      // Silently refresh prices and key data if it hasn't been done in the last 24 hours.
+      // Uses localStorage to track last refresh time per user session.
+      const KEY = 'ft_last_data_refresh';
+      try {
+        const last = localStorage.getItem(KEY);
+        const now = Date.now();
+        if (last && now - parseInt(last, 10) < 24 * 3600 * 1000) return; // within 24h — skip
+
+        // Mark as refreshed immediately to prevent concurrent runs
+        localStorage.setItem(KEY, String(now));
+
+        // Run all refreshes in parallel — failures are silenced
+        const jobs = [
+          this.api('/api/investments/refresh-prices', { method: 'POST', body: '{}' }).catch(() => {}),
+          this.api('/api/crypto/sync', { method: 'POST', body: '{}' }).catch(() => {}),
+        ];
+
+        // Trigger Basiq auto-sync if configured
+        if (this.settings?.basiq_api_key && this.settings?.basiq_user_id) {
+          jobs.push(this.api('/api/basiq/auto-fetch', { method: 'POST', body: '{}' }).catch(() => {}));
+        }
+
+        await Promise.allSettled(jobs);
+
+        // Reload dashboard and investments summary to reflect new prices
+        await Promise.allSettled([
+          this.loadDashboard().catch(() => {}),
+          this.api('/api/investments/summary').then(d => { this.dashInvestments = d; }).catch(() => {}),
+        ]);
+      } catch(e) {
+        // Never block the UI on failures
       }
     },
 
@@ -10032,6 +11143,9 @@ function app() {
     async loadBudgets() {
       this.budgetVsSpend = await this.api(`/api/budgets/vs-spend?month=${this.budgetMonth}&year=${this.budgetYear}`);
       this.zbbSummary = await this.api(`/api/budgets/zbb-summary?month=${this.budgetMonth}&year=${this.budgetYear}`);
+      const now = new Date();
+      if (this.budgetMonth == now.getMonth()+1 && this.budgetYear == now.getFullYear())
+        this.api('/api/budgets/forecast').then(d => { this.budgetForecast = d; }).catch(() => {});
       // Load age group for ABS comparison column
       try {
         const cfg = await this.api('/api/settings');
@@ -10429,12 +11543,13 @@ function app() {
       await this.loadLoans();
     },
     async calcLoanExtra(id) {
-      const extra = parseInt(this.loanExtraInput[id] || 0);
+      const extra = parseFloat(this.loanExtraInput[id] || 0);
       if (!extra || extra <= 0) { this.showToast('Enter an extra repayment amount'); return; }
+      const mode = this.loanExtraMode[id] || 'monthly';
       this.loanExtraLoading[id] = true;
       try {
-        const data = await this.api(`/api/loans/${id}/extra-repayment?extra_cents=${extra * 100}`);
-        this.loanExtraResult[id] = data;
+        const data = await this.api(`/api/loans/${id}/extra-repayment?extra_cents=${Math.round(extra * 100)}&mode=${mode}`);
+        this.loanExtraResult[id] = { ...data, mode };
       } finally {
         this.loanExtraLoading[id] = false;
       }
@@ -10628,6 +11743,147 @@ function app() {
       } catch(e) { console.error('Failed to load history session', e); }
     },
 
+    // ── AI Trader (Paper Trading) ──────────────────────────────────────────
+    async loadPaperPortfolio() {
+      try {
+        this.paperPortfolio = await this.api('/api/paper/portfolio');
+      } catch(e) {
+        this.paperPortfolio = null;
+      }
+    },
+    async loadPaperHoldings() {
+      try {
+        this.paperHoldings = await this.api('/api/paper/holdings');
+      } catch(e) {
+        this.paperHoldings = [];
+      }
+    },
+    async loadPaperTrades() {
+      try {
+        this.paperTrades = await this.api('/api/paper/trades');
+      } catch(e) {
+        this.paperTrades = { items: [] };
+      }
+    },
+    async loadPaperAnalysis() {
+      try {
+        this.paperAnalysis = await this.api('/api/paper/analysis');
+      } catch(e) {
+        this.paperAnalysis = [];
+      }
+    },
+    async loadPaperAnalysisDetail(id) {
+      try {
+        this.paperAnalysisDetail = await this.api(`/api/paper/analysis/${id}`);
+      } catch(e) {
+        this.paperAnalysisDetail = null;
+      }
+    },
+    async createPaperPortfolio() {
+      try {
+        await this.api('/api/paper/portfolio', { method: 'POST', body: JSON.stringify({ strategy: 'aggressive', starting_cash: 1000, markets: 'asx,us' }) });
+        await this.loadPaperPortfolio();
+        await this.loadPaperHoldings();
+        await this.loadPaperTrades();
+        await this.loadPaperAnalysis();
+      } catch(e) {
+        this.paperError = e.message || 'Failed to create portfolio';
+      }
+    },
+    async runPaperAnalysis() {
+      if (this.paperAnalysing) return;
+      this.paperAnalysing = true;
+      this.paperError = '';
+      try {
+        // Auto-create portfolio if it doesn't exist
+        if (!this.paperPortfolio || !this.paperPortfolio.exists) {
+          await this.api('/api/paper/portfolio', { method: 'POST', body: JSON.stringify({ strategy: 'aggressive', starting_cash: 1000, markets: 'asx,us' }) });
+        }
+        const result = await this.api('/api/paper/analyse', { method: 'POST' });
+        await this.loadPaperPortfolio();
+        await this.loadPaperHoldings();
+        await this.loadPaperTrades();
+        await this.loadPaperAnalysis();
+      } catch(e) {
+        this.paperError = e.message || 'Analysis failed';
+      } finally {
+        this.paperAnalysing = false;
+      }
+    },
+    async resetPaperPortfolio() {
+      try {
+        await this.api('/api/paper/portfolio', { method: 'POST', body: JSON.stringify({ reset: true, strategy: 'aggressive', starting_cash: 1000, markets: 'asx,us' }) });
+        this.paperHoldings = [];
+        this.paperTrades = { items: [] };
+        this.paperAnalysis = [];
+        this.paperAnalysisDetail = null;
+        await this.loadPaperPortfolio();
+      } catch(e) {
+        this.paperError = e.message || 'Reset failed';
+      }
+    },
+
+    // ── Security ──────────────────────────────────────────────────────────
+    async loadSecurityAudit() {
+      this.securityLoading = true;
+      try { this.securityAudit = await this.api('/api/security/audit'); }
+      catch(e) { console.error('Security audit failed', e); }
+      finally { this.securityLoading = false; }
+    },
+    async loadSecurityHistory() {
+      this.securityHistoryLoading = true;
+      try { this.securityHistory = await this.api('/api/security/login-history') || []; }
+      catch(e) { this.securityHistory = []; }
+      finally { this.securityHistoryLoading = false; }
+    },
+    async loadSecuritySessions() {
+      this.securitySessionsLoading = true;
+      try { this.securitySessions = await this.api('/api/security/sessions') || []; }
+      catch(e) { this.securitySessions = []; }
+      finally { this.securitySessionsLoading = false; }
+    },
+    async loadSecuritySettings() {
+      try { const s = await this.api('/api/security/settings'); if (s) this.securitySettings = s; }
+      catch(e) {}
+    },
+    async saveSecuritySettings() {
+      try { await this.api('/api/security/settings', { method: 'POST', body: JSON.stringify(this.securitySettings) }); }
+      catch(e) { console.error('Failed to save security settings', e); }
+    },
+    async revokeSession(token) {
+      if (!confirm('Revoke this session? The device will be logged out.')) return;
+      try {
+        await this.api(`/api/security/sessions/${token}`, { method: 'DELETE' });
+        this.loadSecuritySessions();
+        this.loadSecurityAudit();
+      } catch(e) { alert('Failed to revoke session: ' + (e.message || 'Unknown error')); }
+    },
+    async revokeAllOtherSessions() {
+      if (!confirm('Revoke all other sessions? All other devices will be logged out.')) return;
+      try {
+        const r = await this.api('/api/security/sessions', { method: 'DELETE' });
+        this.loadSecuritySessions();
+        this.loadSecurityAudit();
+        alert(`Revoked ${r.revoked || 0} session(s).`);
+      } catch(e) { alert('Failed to revoke sessions: ' + (e.message || 'Unknown error')); }
+    },
+    async purgeExpiredSessions() {
+      try {
+        const r = await this.api('/api/security/sessions/purge-expired', { method: 'POST' });
+        this.loadSecuritySessions();
+        this.loadSecurityAudit();
+        alert(`Purged ${r.purged || 0} expired session(s).`);
+      } catch(e) { alert('Failed to purge sessions'); }
+    },
+    async clearLoginHistory() {
+      if (!confirm('Clear all login history?')) return;
+      try {
+        await this.api('/api/security/login-history', { method: 'DELETE' });
+        this.securityHistory = [];
+        this.loadSecurityAudit();
+      } catch(e) { alert('Failed to clear history'); }
+    },
+
     // ── Car Log / Trips ───────────────────────────────────────────────────
     async loadTrips() {
       this.tripsLoading = true;
@@ -10652,6 +11908,20 @@ function app() {
       };
       this.tripFormShow = true;
       this.$nextTick(() => document.getElementById('trip-form-top')?.scrollIntoView({ behavior: 'smooth' }));
+    },
+    async calcTripDistance() {
+      if (!this.tripForm.start_location || !this.tripForm.end_location) return;
+      this.tripDistanceLoading = true;
+      try {
+        const params = new URLSearchParams({ origin: this.tripForm.start_location, destination: this.tripForm.end_location });
+        const data = await this.api(`/api/trips/distance?${params}`);
+        this.tripForm.km = data.km;
+        this.showToast(`${data.km} km · ~${data.duration_minutes} min drive`);
+      } catch(e) {
+        this.showToast('Could not calculate distance — check addresses and try again', 'error');
+      } finally {
+        this.tripDistanceLoading = false;
+      }
     },
     async saveTrip() {
       if (!this.tripForm.km || !this.tripForm.date) return;
@@ -10706,6 +11976,107 @@ function app() {
       });
     },
 
+    // ── Investment Properties ─────────────────────────────────────────────────
+    async loadProperties() {
+      const [props, portfolio] = await Promise.all([
+        this.api('/api/properties').catch(() => []),
+        this.api('/api/properties/portfolio-summary').catch(() => null),
+      ]);
+      this.properties = props || [];
+      this.propertyPortfolio = portfolio;
+    },
+    resetPropForm() {
+      this.propEditId = null;
+      this.propForm = { address: '', property_type: 'house', purchase_price_cents: '', purchase_date: '', current_value_cents: '', mortgage_outstanding_cents: '', interest_rate: '', weekly_rent_cents: '', ownership_pct: '100', notes: '' };
+    },
+    editProperty(p) {
+      this.propEditId = p.id;
+      this.propForm = {
+        address: p.address,
+        property_type: p.property_type,
+        purchase_price_cents: p.purchase_price ? Math.round(p.purchase_price * 100) : '',
+        purchase_date: p.purchase_date || '',
+        current_value_cents: p.current_value ? Math.round(p.current_value * 100) : '',
+        mortgage_outstanding_cents: p.mortgage_outstanding ? Math.round(p.mortgage_outstanding * 100) : '',
+        interest_rate: p.interest_rate || '',
+        weekly_rent_cents: p.weekly_rent ? Math.round(p.weekly_rent * 100) : '',
+        ownership_pct: p.ownership_pct || '100',
+        notes: p.notes || '',
+      };
+      this.propFormShow = true;
+    },
+    async saveProperty() {
+      if (!this.propForm.address) return;
+      this.propSaving = true;
+      try {
+        const body = {
+          address: this.propForm.address,
+          property_type: this.propForm.property_type,
+          purchase_price_cents: Math.round(parseFloat(this.propForm.purchase_price_cents || 0) * 100),
+          purchase_date: this.propForm.purchase_date || null,
+          current_value_cents: Math.round(parseFloat(this.propForm.current_value_cents || 0) * 100),
+          mortgage_outstanding_cents: Math.round(parseFloat(this.propForm.mortgage_outstanding_cents || 0) * 100),
+          interest_rate: parseFloat(this.propForm.interest_rate || 0),
+          weekly_rent_cents: Math.round(parseFloat(this.propForm.weekly_rent_cents || 0) * 100),
+          ownership_pct: parseFloat(this.propForm.ownership_pct || 100),
+          notes: this.propForm.notes || null,
+        };
+        if (this.propEditId) {
+          await this.api(`/api/properties/${this.propEditId}`, { method: 'PATCH', body: JSON.stringify(body) });
+          this.showToast('Property updated');
+        } else {
+          await this.api('/api/properties', { method: 'POST', body: JSON.stringify(body) });
+          this.showToast('Property added');
+        }
+        this.propFormShow = false;
+        this.resetPropForm();
+        await this.loadProperties();
+      } finally { this.propSaving = false; }
+    },
+    async deleteProperty(id) {
+      if (!confirm('Delete this property and all its expenses?')) return;
+      await this.api(`/api/properties/${id}`, { method: 'DELETE' });
+      this.showToast('Property removed');
+      await this.loadProperties();
+    },
+    async togglePropExpand(id) {
+      this.propExpanded = { ...this.propExpanded, [id]: !this.propExpanded[id] };
+      if (this.propExpanded[id] && !this.propExpenses[id]) {
+        await this.loadPropExpenses(id);
+        await this.loadPropFySummary(id);
+      }
+    },
+    async loadPropExpenses(id) {
+      this.propExpenses = { ...this.propExpenses, [id]: await this.api(`/api/properties/${id}/expenses?fy=${this.propFY}`).catch(() => []) };
+    },
+    async loadPropFySummary(id) {
+      this.propFySummary = { ...this.propFySummary, [id]: await this.api(`/api/properties/${id}/summary?fy=${this.propFY}`).catch(() => null) };
+    },
+    async addPropExpense(property_id) {
+      if (!this.propExpenseForm.amount || !this.propExpenseForm.date) return;
+      this.propExpenseSaving = true;
+      try {
+        const body = {
+          date: this.propExpenseForm.date,
+          category: this.propExpenseForm.category,
+          description: this.propExpenseForm.description || null,
+          amount_cents: Math.round(parseFloat(this.propExpenseForm.amount) * 100),
+          is_deductible: this.propExpenseForm.is_deductible,
+        };
+        await this.api(`/api/properties/${property_id}/expenses`, { method: 'POST', body: JSON.stringify(body) });
+        this.propExpenseForm = { ...this.propExpenseForm, amount: '', description: '', date: new Date().toISOString().split('T')[0] };
+        await this.loadPropExpenses(property_id);
+        await this.loadPropFySummary(property_id);
+        this.showToast('Expense added');
+      } finally { this.propExpenseSaving = false; }
+    },
+    async deletePropExpense(property_id, expense_id) {
+      await this.api(`/api/properties/${property_id}/expenses/${expense_id}`, { method: 'DELETE' });
+      await this.loadPropExpenses(property_id);
+      await this.loadPropFySummary(property_id);
+      this.showToast('Expense removed');
+    },
+
     async checkAbsUpdates() {
       this.absChecking = true;
       this.absCheckResult = null;
@@ -10718,12 +12089,84 @@ function app() {
     },
 
     // ── Actions ──
+    async onImportFileChange(event) {
+      this.importFile = event.target.files[0];
+      this.importDetectedAccount = null;
+      this.importSuggestCreate = null;
+      if (!this.importFile) return;
+      // Read first 2KB to extract headers and Account column value
+      const reader = new FileReader();
+      reader.onload = async (e) => {
+        try {
+          const text = e.target.result;
+          const lines = text.split('\n').filter(l => l.trim());
+          if (lines.length < 2) return;
+          // Simple CSV parse of first two rows
+          const parseRow = (line) => line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
+          const headers = parseRow(lines[0]);
+          const firstRow = parseRow(lines[1]);
+          // Find 'Account' column value
+          const acctIdx = headers.findIndex(h => h.toLowerCase() === 'account');
+          const accountHint = acctIdx >= 0 ? (firstRow[acctIdx] || '') : '';
+          const params = new URLSearchParams({ account_hint: accountHint, headers: headers.join(',') });
+          const data = await this.api(`/api/import/detect-account?${params}`).catch(() => null);
+          if (data?.account_id) {
+            this.importDetectedAccount = data;
+            if (data.confidence === 'high') this.importAccountId = data.account_id;
+          } else if (data?.suggested_name) {
+            this.importSuggestCreate = data.suggested_name;
+          }
+        } catch(e) { /* silent */ }
+      };
+      reader.readAsText(this.importFile.slice(0, 2048));
+    },
+    async createAccountFromCSV() {
+      if (!this.importSuggestCreate) return;
+      this.importCreatingAccount = true;
+      try {
+        const p = new URLSearchParams({ name: this.importSuggestCreate, bank: '', account_number: '' });
+        const acc = await this.api(`/api/import/accounts?${p}`, { method: 'POST' });
+        this.accounts.push(acc);
+        this.importAccountId = acc.id;
+        this.importDetectedAccount = { account_id: acc.id, account_name: acc.name, confidence: 'high' };
+        this.importSuggestCreate = null;
+        this.showToast(`Account "${acc.name}" created`);
+      } catch(e) {
+        this.showToast('Failed to create account — ' + (e.message || e), 4000);
+      } finally { this.importCreatingAccount = false; }
+    },
+    async loadTransferCandidates() {
+      this.transferCandidatesLoading = true;
+      try {
+        const data = await this.api('/api/transactions/transfer-candidates');
+        this.transferCandidates = data?.candidates || [];
+      } catch(e) { /* silent */ } finally { this.transferCandidatesLoading = false; }
+    },
+    async confirmTransfer(pair, idx) {
+      await this.api('/api/transactions/confirm-transfers', {
+        method: 'POST',
+        body: JSON.stringify({ pairs: [{ debit_id: pair.debit.id, credit_id: pair.credit.id }] }),
+      });
+      this.transferCandidates.splice(idx, 1);
+      this.loadDashboard();
+      this.showToast('Marked as transfer — excluded from spend');
+    },
+    async confirmAllTransfers() {
+      const pairs = this.transferCandidates.map(p => ({ debit_id: p.debit.id, credit_id: p.credit.id }));
+      const data = await this.api('/api/transactions/confirm-transfers', {
+        method: 'POST',
+        body: JSON.stringify({ pairs }),
+      });
+      this.transferCandidates = [];
+      this.loadDashboard();
+      this.showToast(`${data.confirmed} transfer pair(s) categorised`);
+    },
     async doImport() {
       if (!this.importFile) return;
       this.importResult = ''; this.importError = '';
       const name = this.importFile.name.toLowerCase();
       if (!name.endsWith('.csv')) {
-        this.importError = 'Only CSV files are supported. In Macquarie internet banking go to: Transactions → Download/Export → CSV format. PDFs cannot be imported.';
+        this.importError = 'Only CSV files are supported. In your bank\'s internet banking, go to Transactions → Download/Export → CSV format. PDFs cannot be imported.';
         return;
       }
       const fd = new FormData();
@@ -10740,6 +12183,21 @@ function app() {
         if (data.offset_loan_updated) this.importResult += ` Offset balance synced to loan.`;
         this.loadDashboard();
         if (data.loan_balance_updated || data.loan_payments_synced > 0 || data.offset_loan_updated) this.loadLoans();
+        // Post-import checks
+        if (data.imported > 0) {
+          // Reimbursement match check
+          const match = await this.api('/api/transactions/reimbursement-match').catch(() => null);
+          if (match?.matches?.length > 0) {
+            const dismissed = JSON.parse(localStorage.getItem('dismissedReimbMatches') || '[]');
+            const undismissed = match.matches.filter(m => !dismissed.includes(m.txn_id));
+            if (undismissed.length > 0)
+              this.showToast(`Possible reimbursement payment detected — check Tax page`, 8000);
+          }
+          // Transfer candidates check
+          await this.loadTransferCandidates();
+          if (this.transferCandidates.length > 0)
+            this.showToast(`${this.transferCandidates.length} possible internal transfer(s) detected — review below`, 6000);
+        }
       } catch (e) { this.importError = e.message; }
     },
     async linkAccountToLoan(accountId, loanId) {
@@ -10764,7 +12222,7 @@ function app() {
     },
     async addAccount() {
       if (!this.newAccount.name) return;
-      const p = new URLSearchParams({ name: this.newAccount.name, bank: 'Macquarie', account_number: this.newAccount.account_number });
+      const p = new URLSearchParams({ name: this.newAccount.name, bank: '', account_number: this.newAccount.account_number });
       await this.api('/api/import/accounts?' + p, { method: 'POST' });
       this.newAccount = { name: '', account_number: '' };
       this.loadAccounts(); this.showToast('Account added');
@@ -10964,6 +12422,9 @@ function app() {
       } finally {
         this.investmentsRefreshing = false;
       }
+    },
+    async loadTaxLossAlerts() {
+      this.taxLossAlerts = await this.api('/api/investments/tax-loss-alerts').catch(() => null);
     },
     async addHolding() {
       const body = { ...this.newHolding, qty: parseFloat(this.newHolding.qty), avg_cost_aud: parseFloat(this.newHolding.avg_cost_aud) };
@@ -11805,6 +13266,17 @@ function app() {
             }
             await this.loadDashboard();
             await this.loadGmailImportHistory();
+            // Check for reimbursement matches after gmail import
+            const imported = (r?.payslips?.processed || 0) + (r?.expenses?.processed || 0);
+            if (imported > 0) {
+              const match = await this.api('/api/transactions/reimbursement-match').catch(() => null);
+              if (match?.matches?.length > 0) {
+                const dismissed = JSON.parse(localStorage.getItem('dismissedReimbMatches') || '[]');
+                const undismissed = match.matches.filter(m => !dismissed.includes(m.txn_id));
+                if (undismissed.length > 0)
+                  this.showToast(`Possible reimbursement payment detected — check Tax page`, 8000);
+              }
+            }
             this.gmailScanning = false;
             return;
           }

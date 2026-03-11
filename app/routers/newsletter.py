@@ -18,6 +18,7 @@ from sqlmodel import Session, select, func
 from database import (
     get_session, engine, Transaction, Category, Budget, Bill, BillPayment,
     Goal, Setting, MerchantEnrichment, User,
+    PaperPortfolio, PaperHolding, PaperTrade, PaperAnalysis,
 )
 from deps import get_setting, get_current_user
 
@@ -192,6 +193,73 @@ def _gather(session: Session, user_id: int) -> dict:
     # ── Finance score (current month) ──
     from routers.score import _compute_score
     score_data = _compute_score(session, today.month, today.year, user_id)
+
+    # ── AI Trader portfolio ──
+    paper_data = None
+    try:
+        portfolio = session.exec(
+            select(PaperPortfolio).where(PaperPortfolio.user_id == user_id)
+        ).first()
+        if portfolio:
+            holdings = session.exec(
+                select(PaperHolding).where(PaperHolding.portfolio_id == portfolio.id)
+            ).all()
+            holdings_value = sum(h.value_aud for h in holdings)
+            total_value = round(portfolio.cash_aud + holdings_value, 2)
+            total_gain = round(total_value - portfolio.starting_cash, 2)
+            return_pct = round(total_gain / portfolio.starting_cash * 100, 2) if portfolio.starting_cash > 0 else 0.0
+
+            # Trades this week
+            week_trades = session.exec(
+                select(PaperTrade).where(
+                    PaperTrade.portfolio_id == portfolio.id,
+                    PaperTrade.executed_at >= week_start.isoformat(),
+                ).order_by(PaperTrade.executed_at.desc())
+            ).all()
+
+            # Latest analysis
+            latest_analysis = session.exec(
+                select(PaperAnalysis).where(PaperAnalysis.portfolio_id == portfolio.id)
+                .order_by(PaperAnalysis.created_at.desc())
+            ).first()
+
+            paper_data = {
+                "total_value": total_value,
+                "cash_aud": round(portfolio.cash_aud, 2),
+                "holdings_value": round(holdings_value, 2),
+                "starting_cash": portfolio.starting_cash,
+                "total_gain": total_gain,
+                "return_pct": return_pct,
+                "holdings": [
+                    {
+                        "ticker": h.ticker,
+                        "qty": h.qty,
+                        "value_aud": round(h.value_aud, 2),
+                        "gain_pct": round(h.gain_pct, 2),
+                    }
+                    for h in sorted(holdings, key=lambda x: x.value_aud, reverse=True)
+                ],
+                "week_trades": [
+                    {
+                        "ticker": t.ticker,
+                        "side": t.side,
+                        "qty": t.qty,
+                        "price_aud": round(t.price_aud, 4),
+                        "total_aud": round(abs(t.total_aud), 2),
+                        "brokerage_aud": round(t.brokerage_aud, 2),
+                        "executed_at": t.executed_at[:10],
+                        "reason": (t.reason or "")[:120],
+                    }
+                    for t in week_trades
+                ],
+                "latest_analysis_text": latest_analysis.analysis_text[:600] if latest_analysis else None,
+                "latest_analysis_date": latest_analysis.created_at[:10] if latest_analysis else None,
+                "total_trades_all_time": session.exec(
+                    select(func.count()).where(PaperTrade.portfolio_id == portfolio.id)
+                ).one(),
+            }
+    except Exception:
+        paper_data = None
 
     # ── Roadmap — rotating pool of genuine pending items (not yet built) ──
     _ROADMAP_POOL = [
@@ -373,6 +441,7 @@ def _gather(session: Session, user_id: int) -> dict:
         "score": score_data,
         "roadmap": ROADMAP_ITEMS[:4],          # top 4 items in email
         "feature_suggestions": FEATURE_SUGGESTIONS[:3],  # top 3 suggestions
+        "paper_trader": paper_data,
     }
 
 
@@ -388,7 +457,16 @@ async def _generate_insights(data: dict, api_key: str) -> str:
         mtd = data["mtd"]
         score = data["score"]
         over_budget = [b for b in data["budgets"] if b["over"]]
-        prompt = f"""Write a concise 3-sentence weekly finance summary for Ryan.
+        pt = data.get("paper_trader")
+        trader_line = ""
+        if pt:
+            sign = "+" if pt["return_pct"] >= 0 else ""
+            trader_line = (
+                f"\n- AI Trader portfolio: ${pt['total_value']:,.2f} total value, "
+                f"{sign}{pt['return_pct']:.2f}% return since inception, "
+                f"{len(pt['week_trades'])} trade(s) this week"
+            )
+        prompt = f"""Write a concise 3-4 sentence weekly finance summary for Ryan.
 
 Data:
 - This week: spent ${w['spend']:,.2f}, earned ${w['income']:,.2f}, net ${w['net']:+,.2f}
@@ -397,9 +475,10 @@ Data:
 - Finance score: {score['score']}/100
 - Over-budget categories: {', '.join(b['category'] for b in over_budget) or 'none'}
 - Action items: {data['action_items']['uncategorised']} uncategorised, {data['action_items']['flagged']} flagged
-- Active goals: {len(data['goals'])}
+- Active goals: {len(data['goals'])}{trader_line}
 
-Write in second person ("You spent…"). Be encouraging but honest. Highlight one key win and one area to watch. No bullet points."""
+Write in second person ("You spent…"). Be encouraging but honest. Highlight one key win and one area to watch.
+If the AI Trader data is present, include a brief note on its performance. No bullet points."""
 
         response = client.messages.create(
             model="claude-haiku-4-5-20251001",
@@ -649,6 +728,100 @@ def _build_html(data: dict, app_url: str, insights: str) -> str:
   </tr>
 """
         html += "  </table>\n</td></tr>\n"
+
+    # ── AI Trader ──
+    pt = data.get("paper_trader")
+    if pt:
+        ret_colour = "#22c55e" if pt["return_pct"] >= 0 else "#ef4444"
+        ret_sign   = "+" if pt["return_pct"] >= 0 else ""
+        html += f"""
+<tr><td style="background:#162032;padding:0 32px 20px;">
+  <h2 style="margin:0 0 12px;font-size:14px;font-weight:700;color:#e2e8f0;text-transform:uppercase;letter-spacing:.06em;">
+    <a href="{base}#paper" style="color:#e2e8f0;text-decoration:none;">🤖 AI Trader Portfolio →</a>
+  </h2>
+  <!-- Stats row -->
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+  <tr>
+    <td width="25%" align="center" style="padding:8px 6px;background:#1e293b;border-radius:8px;">
+      <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Portfolio</div>
+      <div style="font-size:17px;font-weight:700;color:#e2e8f0;">{_fmt(pt['total_value'])}</div>
+    </td>
+    <td width="4px"></td>
+    <td width="25%" align="center" style="padding:8px 6px;background:#1e293b;border-radius:8px;">
+      <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Return</div>
+      <div style="font-size:17px;font-weight:700;color:{ret_colour};">{ret_sign}{pt['return_pct']:.2f}%</div>
+    </td>
+    <td width="4px"></td>
+    <td width="25%" align="center" style="padding:8px 6px;background:#1e293b;border-radius:8px;">
+      <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">Cash</div>
+      <div style="font-size:17px;font-weight:700;color:#e2e8f0;">{_fmt(pt['cash_aud'])}</div>
+    </td>
+    <td width="4px"></td>
+    <td width="21%" align="center" style="padding:8px 6px;background:#1e293b;border-radius:8px;">
+      <div style="font-size:10px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px;">P&amp;L</div>
+      <div style="font-size:17px;font-weight:700;color:{ret_colour};">{'+' if pt['total_gain']>=0 else ''}{_fmt(pt['total_gain'])}</div>
+    </td>
+  </tr>
+  </table>
+"""
+        # Current holdings (top 5)
+        if pt["holdings"]:
+            html += """  <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Current Positions</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+"""
+            for h in pt["holdings"][:5]:
+                h_colour = "#22c55e" if h["gain_pct"] >= 0 else "#ef4444"
+                h_sign   = "+" if h["gain_pct"] >= 0 else ""
+                html += f"""  <tr>
+    <td style="padding:5px 0;border-bottom:1px solid #1e293b;">
+      <table width="100%"><tr>
+        <td style="font-size:12px;font-weight:600;color:#e2e8f0;">{h['ticker']}</td>
+        <td style="font-size:12px;color:#94a3b8;text-align:center;">{h['qty']} units</td>
+        <td style="font-size:12px;font-weight:600;color:#e2e8f0;text-align:right;">{_fmt(h['value_aud'])}</td>
+        <td style="font-size:12px;color:{h_colour};text-align:right;padding-left:8px;">{h_sign}{h['gain_pct']:.1f}%</td>
+      </tr></table>
+    </td>
+  </tr>
+"""
+            html += "  </table>\n"
+
+        # This week's trades
+        if pt["week_trades"]:
+            html += f"""  <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Trades This Week ({len(pt['week_trades'])})</div>
+  <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:12px;">
+"""
+            for t in pt["week_trades"][:6]:
+                t_colour = "#22c55e" if t["side"] == "SELL" else "#ef4444"
+                html += f"""  <tr>
+    <td style="padding:6px 10px;background:#1a2535;border-radius:6px;margin-bottom:4px;">
+      <table width="100%"><tr>
+        <td>
+          <span style="background:{'rgba(34,197,94,.15)' if t['side']=='BUY' else 'rgba(239,68,68,.15)'};color:{'#22c55e' if t['side']=='BUY' else '#ef4444'};font-size:10px;font-weight:700;padding:2px 6px;border-radius:4px;">{t['side']}</span>
+          <span style="font-size:12px;font-weight:600;color:#e2e8f0;margin-left:6px;">{t['qty']} × {t['ticker']}</span>
+          <span style="font-size:11px;color:#94a3b8;margin-left:4px;">@ {_fmt(t['price_aud'])}</span>
+        </td>
+        <td align="right" style="font-size:12px;font-weight:600;color:{t_colour};white-space:nowrap;">{_fmt(t['total_aud'])}</td>
+      </tr></table>
+      {'<div style="font-size:11px;color:#64748b;margin-top:3px;padding-left:2px;">' + t["reason"] + '</div>' if t["reason"] else ''}
+    </td>
+  </tr>
+  <tr><td style="height:4px;"></td></tr>
+"""
+            html += "  </table>\n"
+        elif pt.get("total_trades_all_time", 0) == 0:
+            html += """  <p style="font-size:12px;color:#64748b;font-style:italic;margin:0 0 8px;">No trades executed yet — click "Run Analysis" in the AI Trader tab to start.</p>\n"""
+        else:
+            html += """  <p style="font-size:12px;color:#64748b;font-style:italic;margin:0 0 8px;">No trades this week — portfolio held steady.</p>\n"""
+
+        # Latest analysis excerpt
+        if pt.get("latest_analysis_text"):
+            safe_text = pt["latest_analysis_text"].replace("<", "&lt;").replace(">", "&gt;")
+            html += f"""  <div style="font-size:11px;color:#64748b;text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px;">Latest Analysis ({pt['latest_analysis_date']})</div>
+  <div style="background:#1a2535;border-left:3px solid #818cf8;border-radius:0 8px 8px 0;padding:10px 14px;font-size:12px;color:#94a3b8;line-height:1.6;">{safe_text}{'…' if len(pt['latest_analysis_text']) >= 600 else ''}</div>
+  <div style="margin-top:6px;text-align:right;"><a href="{base}#paper" style="font-size:11px;color:#818cf8;text-decoration:none;">View full analysis in app →</a></div>
+"""
+
+        html += "</td></tr>\n"
 
     # ── Chatbot prompt ──
     html += f"""

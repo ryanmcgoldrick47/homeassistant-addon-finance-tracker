@@ -1,5 +1,87 @@
 [
   {
+    "date": "2026-03-10",
+    "version": "v68",
+    "title": "AI Trader — Simulated Portfolio",
+    "changes": [
+      "New AI Trader tab: Claude Sonnet manages a simulated $1,000 aggressive-growth portfolio across ASX and US markets",
+      "Weekly AI analysis: Claude reviews market conditions, evaluates 30 stocks (15 ASX + 15 US), and executes simulated buy/sell trades at live Yahoo Finance prices",
+      "IBKR-style brokerage simulation: ASX max(AUD 3.50, 0.08% of trade), US max(AUD ~1.60, USD 0.005/share)",
+      "Portfolio dashboard: total value, cash balance, return %, vs ASX 200, vs S&P 500",
+      "Holdings table: live prices, unrealised gain/loss per position",
+      "Trade history: full record of every simulated execution with AI rationale",
+      "Analysis history: browse past AI reports with trade summaries",
+      "Optional auto-trading: enable weekly autonomous analysis (configurable day)",
+      "Manual trade override: execute a buy or sell manually for testing",
+      "HA push notification after each analysis run with trade count and portfolio return"
+    ]
+  },
+  {
+    "date": "2026-03-10",
+    "version": "v67",
+    "title": "Security Tab + Brute-Force Protection",
+    "changes": [
+      "New Security tab: live security audit checklist, login history, active session management, API key vault, and alert settings",
+      "Brute-force protection: 5 failed logins from one IP triggers an HA push notification; 10 failures causes a 15-minute lockout",
+      "Login audit log: every login attempt (success or failure) is recorded with username, IP, timestamp, and reason",
+      "HA push notification on password change and sensitive settings update (API keys, tokens)",
+      "Active session management: view all live sessions, revoke individual sessions or all others with one tap",
+      "POST /api/settings now requires authentication — prevents unauthenticated settings writes",
+      "Minimum password length raised from 4 to 8 characters",
+      "First-time setup still allows passwordless login — but any account with a password set is fully protected"
+    ]
+  },
+  {
+    "date": "2026-03-08",
+    "version": "v66",
+    "title": "Smarter Transfers + Bank-Agnostic Import",
+    "changes": [
+      "Transfer detection window extended from 2 to 7 days — catches inter-bank transfers that take 4–7 business days to settle",
+      "Confidence tiers updated: high = same-day, medium = 1–3 days, low = 4–7 days (shown with red 'verify' badge)",
+      "CSV import is now bank-agnostic — all Macquarie-specific instructions replaced with generic guidance supporting any AU bank",
+      "Auto-create account: if a CSV contains an account name not yet in the app, a 'New account detected' prompt appears with a one-click Create button",
+      "New account defaults to blank bank name (user sets it) rather than defaulting to Macquarie"
+    ]
+  },
+  {
+    "date": "2026-03-08",
+    "version": "v65",
+    "title": "Auto Account Detection + Transfer Detector",
+    "changes": [
+      "CSV import: auto-detects which account a CSV belongs to — reads the 'Account' column in Macquarie exports and matches it to your accounts; shows green 'Auto-detected' chip and pre-selects the account when confidence is high",
+      "Transfer Detector: after every CSV import, automatically scans for debit/credit pairs across your accounts that look like internal transfers (same amount, within ±2 days, different accounts)",
+      "Transfer review card: appears inline below the import form listing each candidate pair with account names, descriptions, dates, and confidence (same-day vs 1-2 days apart); confirm individually or 'Confirm All'",
+      "Confirmed transfers are categorised as 'Transfers' and excluded from spend totals, savings rate, and budget calculations",
+      "Manual 'Scan for Transfers' button on the Import page to detect transfers at any time (not just after import)"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "version": "v64",
+    "title": "Investment Property Tracker",
+    "changes": [
+      "New 'Properties' page — track investment properties with rental yield, equity, LVR, and capital growth",
+      "Portfolio summary: total value, equity, annual rent, gross yield, and total capital growth across all properties",
+      "Per-property metrics: current value, equity %, mortgage balance, interest rate, weekly rent, yield, LVR progress bar",
+      "Expense log per property: categorised deductible expenses (mortgage interest, council rates, water, insurance, strata, management, repairs, maintenance, depreciation, advertising)",
+      "FY tax summary per property: estimated rent income (from weekly rate × weeks elapsed), deductible expenses breakdown by category, net rental income, negatively geared indicator",
+      "Supports joint ownership: enter ownership % for shared properties (e.g. 50% for jointly owned)"
+    ]
+  },
+  {
+    "date": "2026-03-07",
+    "version": "v63",
+    "title": "Tax-Loss Harvesting + Car Log Distance + Forecasts + Savings Rate",
+    "changes": [
+      "Tax-Loss Harvesting Alerts: new banner on Investments page flags all holdings (shares AND crypto) with unrealised losses before 30 June; shows ticker, asset type, qty, cost vs current value, loss amount and %; total unrealised loss summarised; disclaimer to consult tax agent",
+      "Car Log: Calculate KM button — enter start and end locations, click to auto-calculate driving distance via OpenStreetMap + OSRM routing; shows distance in km and estimated drive time",
+      "Month-End Spend Forecast: new card at top of Budget page (current month only) — projects each category's spend to end of month based on daily pace; dual-layer progress bars show actual vs projected; amber/red warnings for categories tracking over budget",
+      "Rolling 12-Month Savings Rate: new card on Dashboard showing monthly savings rate trend as a sparkline bar chart; colour-coded vs savings target; months meeting target counted; loads non-blocking on app start",
+      "Reimbursement auto-detection: after CSV or Gmail import, app checks for pending reimbursable expenses and alerts if a matching credit is found",
+      "Extra repayment calculator: mode toggle — choose between monthly recurring extra repayment or one-off lump sum; results card explains which assumption was used"
+    ]
+  },
+  {
     "date": "2026-03-07",
     "version": "v56",
     "title": "Car Log + OCR Fixes",

@@ -4,7 +4,8 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+import httpx
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -106,6 +107,56 @@ def delete_trip(
     session.delete(trip)
     session.commit()
     return {"ok": True}
+
+
+@router.get("/distance")
+async def calculate_distance(
+    origin: str = Query(..., description="Start address"),
+    destination: str = Query(..., description="End address"),
+    current_user: User = Depends(get_current_user),
+):
+    """Calculate driving distance (km) between two addresses using Nominatim + OSRM."""
+    NOM_URL = "https://nominatim.openstreetmap.org/search"
+    OSRM_URL = "https://router.project-osrm.org/route/v1/driving"
+    HEADERS = {"User-Agent": "FinanceTracker/1.0 (home assistant app)"}
+
+    async with httpx.AsyncClient(timeout=10) as client:
+        async def geocode(addr: str) -> tuple[float, float]:
+            r = await client.get(NOM_URL, params={"q": addr, "format": "json", "limit": 1}, headers=HEADERS)
+            r.raise_for_status()
+            results = r.json()
+            if not results:
+                raise HTTPException(400, f"Could not geocode address: {addr!r}")
+            return float(results[0]["lon"]), float(results[0]["lat"])
+
+        try:
+            orig_lon, orig_lat = await geocode(origin)
+            dest_lon, dest_lat = await geocode(destination)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"Geocoding failed: {e}") from e
+
+        try:
+            coords = f"{orig_lon},{orig_lat};{dest_lon},{dest_lat}"
+            r = await client.get(f"{OSRM_URL}/{coords}", params={"overview": "false"}, headers=HEADERS)
+            r.raise_for_status()
+            data = r.json()
+            if data.get("code") != "Ok" or not data.get("routes"):
+                raise HTTPException(400, "OSRM routing failed")
+            distance_m = data["routes"][0]["distance"]
+            duration_s = data["routes"][0]["duration"]
+            km = round(distance_m / 1000, 1)
+            return {
+                "km": km,
+                "duration_minutes": round(duration_s / 60, 1),
+                "origin": origin,
+                "destination": destination,
+            }
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(400, f"Routing failed: {e}") from e
 
 
 @router.get("/summary")

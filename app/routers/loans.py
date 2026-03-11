@@ -242,6 +242,7 @@ def amortisation_schedule(
 def extra_repayment(
     loan_id: int,
     extra_cents: int = 0,
+    mode: str = "monthly",   # "monthly" | "lumpsum"
     session: Session = Depends(get_session),
     current_user: User = Depends(get_current_user),
 ):
@@ -253,17 +254,26 @@ def extra_repayment(
         loan.outstanding_cents, loan.interest_rate,
         loan.term_months, loan.monthly_repayment_cents, loan.offset_cents,
     )
-    extra_schedule = _amortise(
-        loan.outstanding_cents, loan.interest_rate,
-        loan.term_months, loan.monthly_repayment_cents + extra_cents, loan.offset_cents,
-    )
+
+    if mode == "lumpsum":
+        # Reduce outstanding balance by the lump sum, then amortise normally
+        reduced_outstanding = max(0, loan.outstanding_cents - extra_cents)
+        extra_schedule = _amortise(
+            reduced_outstanding, loan.interest_rate,
+            loan.term_months, loan.monthly_repayment_cents, loan.offset_cents,
+        )
+    else:
+        # Add extra to every monthly payment
+        extra_schedule = _amortise(
+            loan.outstanding_cents, loan.interest_rate,
+            loan.term_months, loan.monthly_repayment_cents + extra_cents, loan.offset_cents,
+        )
 
     base_interest = sum(r["interest"] for r in base_schedule)
     extra_interest = sum(r["interest"] for r in extra_schedule)
     months_saved = len(base_schedule) - len(extra_schedule)
     interest_saved = base_interest - extra_interest
 
-    # Compute new payoff date
     new_months = len(extra_schedule)
     d = date.today()
     m = d.month - 1 + new_months
@@ -276,6 +286,7 @@ def extra_repayment(
         "interest_saved": round(interest_saved, 2),
         "new_payoff_date": new_payoff,
         "extra_per_month": extra_cents / 100,
+        "mode": mode,
     }
 
 
