@@ -863,3 +863,99 @@ async def manual_trade(
     session.refresh(trade)
 
     return {"ok": True, "trade": trade.model_dump()}
+
+
+# ── Chat ───────────────────────────────────────────────────────────────────
+
+class PaperChatMessage(BaseModel):
+    role: str   # "user" or "assistant"
+    content: str
+
+
+class PaperChatRequest(BaseModel):
+    messages: list[PaperChatMessage]
+
+
+@router.post("/chat")
+async def paper_chat(
+    req: PaperChatRequest,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Chat with the AI about the paper trading portfolio and potential investments."""
+    p = session.exec(
+        select(PaperPortfolio).where(PaperPortfolio.user_id == current_user.id)
+    ).first()
+    if not p:
+        raise HTTPException(400, "No portfolio yet. Create one first.")
+
+    holdings = session.exec(
+        select(PaperHolding).where(PaperHolding.portfolio_id == p.id)
+    ).all()
+    latest_analysis = session.exec(
+        select(PaperAnalysis).where(PaperAnalysis.portfolio_id == p.id)
+        .order_by(PaperAnalysis.created_at.desc())
+    ).first()
+    recent_trades = session.exec(
+        select(PaperTrade).where(PaperTrade.portfolio_id == p.id)
+        .order_by(PaperTrade.executed_at.desc())
+        .limit(10)
+    ).all()
+
+    holdings_value = sum(h.value_aud for h in holdings)
+    total_value = round(p.cash_aud + holdings_value, 2)
+    return_pct = round((total_value - p.starting_cash) / p.starting_cash * 100, 2) if p.starting_cash > 0 else 0.0
+
+    holdings_text = "\n".join([
+        f"  {h.ticker}: {h.qty} units @ avg ${h.avg_cost_aud:.4f} AUD, current ${h.current_price_aud:.4f} AUD, gain {h.gain_pct:+.2f}%"
+        for h in holdings
+    ]) or "  No holdings (cash only)"
+
+    recent_trades_text = "\n".join([
+        f"  {t.executed_at[:10] if t.executed_at else '?'}: {t.side} {t.qty} {t.ticker} @ ${t.price_aud:.4f} — {t.reason or ''}"
+        for t in recent_trades
+    ]) or "  No trades yet"
+
+    analysis_context = (
+        f"\nLatest AI weekly analysis (excerpt):\n{latest_analysis.analysis_text[:800]}..."
+        if latest_analysis else ""
+    )
+
+    system_prompt = f"""You are an AI investment assistant for a simulated paper trading portfolio (ASX + US markets, aggressive growth strategy). Help the user think through investment ideas, understand portfolio performance, and explore potential trades. This is a simulation — no real money is involved.
+
+Portfolio snapshot:
+- Starting capital: AUD ${p.starting_cash:.2f}
+- Cash available: AUD ${p.cash_aud:.2f}
+- Holdings value: AUD ${holdings_value:.2f}
+- Total value: AUD ${total_value:.2f}
+- Return since inception: {return_pct:+.2f}%
+
+Current holdings:
+{holdings_text}
+
+Recent trades:
+{recent_trades_text}{analysis_context}
+
+Keep responses concise (under 350 words) and practical. Use AUD where relevant. Clearly label any market data as estimates since you may not have live prices."""
+
+    messages_for_api = [{"role": m.role, "content": m.content} for m in req.messages]
+
+    api_key = get_setting(session, "anthropic_api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(400, "Anthropic API key not configured. Add it in Settings.")
+
+    try:
+        import anthropic as _anthropic
+        client_ai = _anthropic.Anthropic(api_key=api_key)
+        def _call():
+            return client_ai.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=1024,
+                system=system_prompt,
+                messages=messages_for_api,
+            ).content[0].text
+        answer = await asyncio.to_thread(_call)
+    except Exception as e:
+        raise HTTPException(500, f"AI call failed: {str(e)[:200]}")
+
+    return {"answer": answer}

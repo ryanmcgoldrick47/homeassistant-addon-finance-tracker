@@ -7237,6 +7237,40 @@
                 </template>
               </div>
 
+              <!-- Chat -->
+              <div class="card" style="padding:16px;margin-bottom:16px;">
+                <div style="font-size:14px;font-weight:600;margin-bottom:12px;">💬 Ask the AI Trader</div>
+                <template x-if="paperChatMessages.length > 0">
+                  <div style="max-height:320px;overflow-y:auto;margin-bottom:12px;display:flex;flex-direction:column;gap:10px;">
+                    <template x-for="(msg, i) in paperChatMessages" :key="i">
+                      <div :style="msg.role === 'user' ? 'align-self:flex-end;max-width:80%' : 'align-self:flex-start;max-width:90%'">
+                        <div :style="msg.role === 'user'
+                          ? 'background:var(--accent);color:#fff;border-radius:12px 12px 2px 12px;padding:8px 12px;font-size:13px;'
+                          : 'background:var(--surf2);border-radius:12px 12px 12px 2px;padding:8px 12px;font-size:13px;line-height:1.6;'"
+                          x-html="msg.role === 'assistant' ? renderAdvisorMarkdown(msg.content) : msg.content.replace(/</g,'&lt;')">
+                        </div>
+                      </div>
+                    </template>
+                    <div x-show="paperChatLoading" style="align-self:flex-start;">
+                      <div style="background:var(--surf2);border-radius:12px 12px 12px 2px;padding:8px 14px;font-size:13px;color:var(--muted);">Thinking…</div>
+                    </div>
+                    <div id="paper-chat-bottom"></div>
+                  </div>
+                </template>
+                <template x-if="paperChatMessages.length === 0">
+                  <div style="font-size:12px;color:var(--muted);margin-bottom:10px;">Ask about potential investments, portfolio strategy, specific stocks, or anything about the simulated portfolio.</div>
+                </template>
+                <div style="display:flex;gap:8px;align-items:flex-end;">
+                  <textarea x-model="paperChatInput" rows="2" class="input" style="flex:1;font-size:13px;resize:none;"
+                    placeholder="e.g. What do you think about buying more BHP? Should I take profits on AAPL?"
+                    @keydown.enter.prevent="if(!$event.shiftKey) sendPaperChat()"></textarea>
+                  <div style="display:flex;flex-direction:column;gap:6px;">
+                    <button @click="sendPaperChat()" class="btn btn-primary" :disabled="paperChatLoading || !paperChatInput.trim()" style="padding:8px 14px;white-space:nowrap;">Send</button>
+                    <button x-show="paperChatMessages.length > 0" @click="paperChatMessages=[]" class="btn" style="padding:6px 14px;font-size:11px;white-space:nowrap;">Clear</button>
+                  </div>
+                </div>
+              </div>
+
               <!-- Settings panel -->
               <div x-show="paperShowSettings" class="card" style="padding:16px;margin-bottom:16px;">
                 <div style="font-size:14px;font-weight:600;margin-bottom:12px;">⚙️ Portfolio Settings</div>
@@ -9301,6 +9335,9 @@ function app() {
     paperError: '',
     paperShowHistory: false,
     paperShowSettings: false,
+    paperChatMessages: [],
+    paperChatInput: '',
+    paperChatLoading: false,
 
     // Receipt OCR
     ocrFile: null,
@@ -11820,6 +11857,29 @@ function app() {
         await this.loadPaperPortfolio();
       } catch(e) {
         this.paperError = e.message || 'Reset failed';
+      }
+    },
+
+    async sendPaperChat() {
+      const q = this.paperChatInput.trim();
+      if (!q || this.paperChatLoading) return;
+      this.paperChatLoading = true;
+      this.paperChatInput = '';
+      this.paperChatMessages.push({ role: 'user', content: q });
+      try {
+        const d = await this.api('/api/paper/chat', {
+          method: 'POST',
+          body: JSON.stringify({ messages: this.paperChatMessages }),
+        });
+        this.paperChatMessages.push({ role: 'assistant', content: d.answer });
+      } catch(e) {
+        this.paperChatMessages.push({ role: 'assistant', content: 'Error: ' + (e.message || 'Failed to get answer.') });
+      } finally {
+        this.paperChatLoading = false;
+        this.$nextTick(() => {
+          const el = document.getElementById('paper-chat-bottom');
+          if (el) el.scrollIntoView({ behavior: 'smooth' });
+        });
       }
     },
 
