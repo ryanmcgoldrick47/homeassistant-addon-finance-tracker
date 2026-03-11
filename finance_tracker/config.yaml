@@ -1,6 +1,6 @@
 name: Finance Tracker
 description: Personal finance — budgets, tax prep, bill tracking, AI categorisation
-version: "1.0.0"
+version: "68.0.0"
 slug: finance_tracker
 init: false
 arch:
