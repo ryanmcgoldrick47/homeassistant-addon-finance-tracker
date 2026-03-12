@@ -1728,7 +1728,7 @@
                 <div style="display:flex;align-items:center;gap:10px;font-size:12px;padding:6px 0;border-bottom:1px solid var(--border);">
                   <span :style="entry.status === 'ok' ? 'color:var(--green)' : 'color:var(--red)'" x-text="entry.status === 'ok' ? '✓' : '✗'"></span>
                   <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="entry.file"></span>
-                  <span x-show="entry.status === 'ok'" style="color:var(--muted);" x-text="`${entry.imported} in, ${entry.skipped} skipped`"></span>
+                  <span x-show="entry.status === 'ok'" style="color:var(--muted);" x-text="`${entry.imported} in, ${entry.skipped} skipped${entry.reassigned > 0 ? ', ' + entry.reassigned + ' reassigned' : ''}`"></span>
                   <span x-show="entry.status !== 'ok'" style="color:var(--red);" x-text="entry.error"></span>
                   <span style="color:var(--muted);white-space:nowrap;" x-text="entry.processed_at"></span>
                 </div>
@@ -12245,6 +12245,7 @@ function app() {
         const data = await res.json();
         if (!res.ok) throw new Error(data.detail || 'Import failed');
         this.importResult = `Imported ${data.imported} transactions, skipped ${data.skipped} duplicates.`;
+        if (data.reassigned > 0) this.importResult += ` ${data.reassigned} moved from wrong account.`;
         if (data.errors?.length) this.importResult += ` ${data.errors.length} errors.`;
         if (data.loan_balance_updated) this.importResult += ` Loan balance updated.`;
         if (data.loan_payments_synced > 0) this.importResult += ` ${data.loan_payments_synced} loan payment(s) recorded.`;

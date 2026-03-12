@@ -70,7 +70,7 @@ async def folder_watch_tick():
             shutil.move(src, dst)
             entry = {
                 "file": filename, "status": "ok",
-                "imported": result["imported"], "skipped": result["skipped"],
+                "imported": result["imported"], "skipped": result["skipped"], "reassigned": result.get("reassigned", 0),
                 "errors": len(result["errors"]),
                 "processed_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
             }
@@ -346,19 +346,19 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
     Used by both the HTTP endpoint and the folder watcher background task."""
     account = session.get(Account, account_id)
     if not account:
-        return {"imported": 0, "skipped": 0, "errors": [{"row": 0, "error": f"Account {account_id} not found"}]}
+        return {"imported": 0, "skipped": 0, "reassigned": 0, "errors": [{"row": 0, "error": f"Account {account_id} not found"}]}
 
     text = _strip_preamble(text)
     uncategorised_id = _find_uncategorised_id(session)
     reader = csv.DictReader(io.StringIO(text))
-    imported = skipped = 0
+    imported = skipped = reassigned = 0
     errors: list[dict] = []
 
     headers = reader.fieldnames or []
     col = _map_columns(headers)
     if "date" not in col:
         return {
-            "imported": 0, "skipped": 0,
+            "imported": 0, "skipped": 0, "reassigned": 0,
             "errors": [{"row": 0, "error": f"No date column found. Headers: {headers}"}],
         }
 
@@ -399,9 +399,18 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
                 loan_payment_rows.append({"date": date_val, "amount": amount, "description": description})
 
             raw_hash = _make_hash(date_val, description, amount)
-            if session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first():
-                skipped += 1
-                continue
+            existing = session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first()
+            if existing:
+                if existing.account_id == account_id:
+                    skipped += 1
+                    continue
+                else:
+                    # Same transaction was imported to wrong account — reassign it
+                    existing.account_id = account_id
+                    session.add(existing)
+                    session.commit()
+                    reassigned += 1
+                    continue
             # Cross-source dedup: skip if Gmail import already has this purchase
             if not is_credit:
                 date_lo = date_val - timedelta(days=1)
@@ -479,6 +488,7 @@ def import_csv_text(text: str, account_id: int, session: Session, user_id: int =
     return {
         "imported": imported,
         "skipped": skipped,
+        "reassigned": reassigned,
         "errors": errors,
         "loan_payments_synced": loan_payments_synced,
         "loan_balance_updated": loan_balance_updated,
