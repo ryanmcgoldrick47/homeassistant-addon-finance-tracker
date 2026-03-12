@@ -9,6 +9,7 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from database import Transaction, Account, Category, Loan, LoanPayment, get_session, engine, User
@@ -232,6 +233,132 @@ def detect_account(
         "confidence": confidence,
         "score": best_score,
     }
+
+
+class DetectFromCSVBody(BaseModel):
+    csv_sample: str
+
+
+@router.post("/detect-account")
+def detect_account_from_csv(
+    body: DetectFromCSVBody,
+    session: Session = Depends(get_session),
+    current_user: User = Depends(get_current_user),
+):
+    """Detect account from CSV content using transaction-history fingerprinting,
+    account number matching in preamble, then name/hint fallback."""
+    accounts = session.exec(select(Account).where(Account.user_id == current_user.id)).all()
+    if not accounts:
+        return {"account_id": None, "confidence": "none"}
+
+    sample = body.csv_sample
+
+    # 1. Scan preamble for stored account numbers
+    for line in sample.splitlines():
+        low = line.lower()
+        has_date = any(
+            _re.search(r'(?:^|,)\s*' + _re.escape(a) + r'\s*(?:,|$)', low)
+            for a in _COL_ALIASES["date"]
+        )
+        if has_date:
+            break
+        for acc in accounts:
+            if acc.account_number and acc.account_number.strip() and acc.account_number.strip() in line:
+                return {"account_id": acc.id, "account_name": acc.name, "confidence": "high", "method": "account_number"}
+
+    # 2. Parse rows and fingerprint via raw_hash against existing transactions
+    stripped = _strip_preamble(sample)
+    try:
+        reader = csv.DictReader(io.StringIO(stripped))
+        headers = list(reader.fieldnames or [])
+        col = _map_columns(headers)
+        account_hits: dict[int, int] = {}
+        rows_parsed = 0
+        for row in reader:
+            if rows_parsed >= 25:
+                break
+            try:
+                row = {k.strip(): v.strip() for k, v in row.items() if k}
+                date_val = _parse_macquarie_date(row.get(col.get("date", ""), ""))
+                description = row.get(col.get("description", ""), "")
+                credit_col = col.get("credit", "")
+                debit_col  = col.get("debit", "")
+                credit_str = row.get(credit_col, "") if credit_col else ""
+                debit_str  = row.get(debit_col, "")  if debit_col  else ""
+                if credit_str and credit_str not in ("0", "0.00"):
+                    amount = float(credit_str.replace(",", ""))
+                elif debit_str and debit_str not in ("0", "0.00"):
+                    amount = float(debit_str.replace(",", ""))
+                else:
+                    amt_col = col.get("amount", "")
+                    amt_str = (row.get(amt_col, "0") if amt_col else "0").replace(",", "") or "0"
+                    amount = abs(float(amt_str))
+                raw_hash = _make_hash(date_val, description, amount)
+                existing = session.exec(select(Transaction).where(Transaction.raw_hash == raw_hash)).first()
+                if existing and existing.account_id:
+                    account_hits[existing.account_id] = account_hits.get(existing.account_id, 0) + 1
+                rows_parsed += 1
+            except Exception:
+                continue
+        if account_hits:
+            best_id = max(account_hits, key=account_hits.get)
+            hits = account_hits[best_id]
+            acc = next((a for a in accounts if a.id == best_id), None)
+            if acc:
+                return {
+                    "account_id": best_id,
+                    "account_name": acc.name,
+                    "confidence": "high" if hits >= 2 else "low",
+                    "method": "transaction_history",
+                    "matches": hits,
+                }
+    except Exception:
+        pass
+
+    # 3. Fall back to account-column hint + name matching (existing logic)
+    headers_str = ",".join(headers) if 'headers' in dir() else ""
+    hint = ""
+    try:
+        h_lower = [h.lower().strip() for h in headers]
+        if "account" in h_lower:
+            acct_idx = h_lower.index("account")
+            first_data = stripped.split("\n")[1] if "\n" in stripped else ""
+            vals = first_data.split(",")
+            if acct_idx < len(vals):
+                hint = vals[acct_idx].strip().strip('"')
+    except Exception:
+        pass
+
+    if hint:
+        hint_lower = hint.lower()
+        best_id = None
+        best_score = 0
+        for acc in accounts:
+            score = 0
+            name_lower = acc.name.lower().strip()
+            if acc.account_number and acc.account_number.strip() and acc.account_number.strip() in hint:
+                score = 100
+            elif name_lower and (name_lower in hint_lower or hint_lower in name_lower):
+                score = 85
+            else:
+                hint_tokens = set(hint_lower.split()) - _GENERIC_WORDS
+                name_tokens = set(name_lower.split()) - _GENERIC_WORDS
+                score = len(hint_tokens & name_tokens) * 30
+            if score > best_score:
+                best_score = score
+                best_id = acc.id
+        if best_id and best_score > 0:
+            acc = next((a for a in accounts if a.id == best_id), None)
+            return {
+                "account_id": best_id,
+                "account_name": acc.name if acc else "",
+                "confidence": "high" if best_score >= 60 else "low",
+                "method": "name_hint",
+            }
+        elif hint:
+            return {"account_id": None, "confidence": "none", "suggested_name": hint.title().strip()}
+
+    return {"account_id": None, "confidence": "none"}
 
 
 @router.get("/accounts")

@@ -1475,11 +1475,12 @@
             </div>
             <div style="display:flex;flex-direction:column;gap:14px;">
               <div>
-                <label class="form-label" style="display:flex;align-items:center;gap:8px;">
+                <label class="form-label" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                   <span>Account</span>
                   <span x-show="importDetectedAccount && importDetectedAccount.confidence === 'high'"
-                    style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,.15);color:#22c55e;font-weight:600;">
-                    ✓ Auto-detected: <span x-text="importDetectedAccount?.account_name"></span>
+                    style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(34,197,94,.15);color:#22c55e;font-weight:600;"
+                    :title="importDetectedAccount?.method === 'transaction_history' ? 'Matched ' + importDetectedAccount.matches + ' transactions from your history' : importDetectedAccount?.method === 'account_number' ? 'Matched account number in file' : 'Matched by name'">
+                    ✓ Auto-detected
                   </span>
                   <span x-show="importDetectedAccount && importDetectedAccount.confidence === 'low'"
                     style="font-size:11px;padding:2px 8px;border-radius:10px;background:rgba(245,158,11,.15);color:#f59e0b;font-weight:600;">
@@ -12162,22 +12163,15 @@ function app() {
       this.importDetectedAccount = null;
       this.importSuggestCreate = null;
       if (!this.importFile) return;
-      // Read first 2KB to extract headers and Account column value
+      // Read first 6KB and POST to detect-account for fingerprint-based detection
       const reader = new FileReader();
       reader.onload = async (e) => {
         try {
-          const text = e.target.result;
-          const lines = text.split('\n').filter(l => l.trim());
-          if (lines.length < 2) return;
-          // Simple CSV parse of first two rows
-          const parseRow = (line) => line.split(',').map(c => c.replace(/^"|"$/g, '').trim());
-          const headers = parseRow(lines[0]);
-          const firstRow = parseRow(lines[1]);
-          // Find 'Account' column value
-          const acctIdx = headers.findIndex(h => h.toLowerCase() === 'account');
-          const accountHint = acctIdx >= 0 ? (firstRow[acctIdx] || '') : '';
-          const params = new URLSearchParams({ account_hint: accountHint, headers: headers.join(',') });
-          const data = await this.api(`/api/import/detect-account?${params}`).catch(() => null);
+          const csv_sample = e.target.result;
+          const data = await this.api('/api/import/detect-account', {
+            method: 'POST',
+            body: JSON.stringify({ csv_sample }),
+          }).catch(() => null);
           if (data?.account_id) {
             this.importDetectedAccount = data;
             if (data.confidence === 'high') this.importAccountId = data.account_id;
@@ -12186,7 +12180,7 @@ function app() {
           }
         } catch(e) { /* silent */ }
       };
-      reader.readAsText(this.importFile.slice(0, 2048));
+      reader.readAsText(this.importFile.slice(0, 6144));
     },
     async createAccountFromCSV() {
       if (!this.importSuggestCreate) return;
