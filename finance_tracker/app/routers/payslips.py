@@ -407,14 +407,16 @@ async def upload_payslip(
     if existing:
         raise HTTPException(409, f"A payslip for {pay_date} from {employer} already exists (ID {existing.id}).")
 
-    # Get previous payslip for same employer for comparison
-    prev = session.exec(
-        select(Payslip).where(
-            Payslip.user_id == current_user.id,
-            Payslip.employer == employer,
-            Payslip.pay_date < pay_date,
-        ).order_by(Payslip.pay_date.desc()).limit(1)
-    ).first()
+    # Get previous payslip for same employer (case-insensitive) for comparison
+    prev = None
+    if employer:
+        prev = session.exec(
+            select(Payslip).where(
+                Payslip.user_id == current_user.id,
+                func.lower(Payslip.employer) == employer.lower(),
+                Payslip.pay_date < pay_date,
+            ).order_by(Payslip.pay_date.desc()).limit(1)
+        ).first()
 
     flags = _check_variations(data, prev)
 
@@ -532,13 +534,15 @@ async def bulk_upload_payslips(
                 results.append(result)
                 continue
 
-            prev = session.exec(
-                select(Payslip).where(
-                    Payslip.user_id == current_user.id,
-                    Payslip.employer == employer,
-                    Payslip.pay_date < pay_date,
-                ).order_by(Payslip.pay_date.desc()).limit(1)
-            ).first()
+            prev = None
+            if employer:
+                prev = session.exec(
+                    select(Payslip).where(
+                        Payslip.user_id == current_user.id,
+                        func.lower(Payslip.employer) == employer.lower(),
+                        Payslip.pay_date < pay_date,
+                    ).order_by(Payslip.pay_date.desc()).limit(1)
+                ).first()
             flags = _check_variations(data, prev)
 
             def _cents(val) -> int:
@@ -956,13 +960,15 @@ async def payslip_watch_tick():
                 if existing:
                     entry.update({"status": "duplicate", "detail": f"Already exists (ID {existing.id})"})
                 else:
-                    prev = session.exec(
-                        select(Payslip).where(
-                            Payslip.user_id == 1,
-                            Payslip.employer == employer,
-                            Payslip.pay_date < pay_date,
-                        ).order_by(Payslip.pay_date.desc()).limit(1)
-                    ).first()
+                    prev = None
+                    if employer:
+                        prev = session.exec(
+                            select(Payslip).where(
+                                Payslip.user_id == 1,
+                                func.lower(Payslip.employer) == employer.lower(),
+                                Payslip.pay_date < pay_date,
+                            ).order_by(Payslip.pay_date.desc()).limit(1)
+                        ).first()
                     flags = _check_variations(data, prev)
 
                     def _cents(val) -> int:

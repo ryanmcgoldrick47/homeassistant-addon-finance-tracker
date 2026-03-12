@@ -1103,6 +1103,10 @@ def dashboard(
             "other_credits": other_credits,
         }
 
+    # Fall back to payslip gross when no credit transactions exist (e.g. payslips uploaded but bank not imported)
+    if month_income == 0 and payslip_gross > 0:
+        month_income = payslip_gross
+
     def pct_change(cur, prev):
         if prev == 0:
             return None
