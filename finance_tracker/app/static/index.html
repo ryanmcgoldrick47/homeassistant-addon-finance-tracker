@@ -515,11 +515,15 @@
             <div style="flex:1;min-width:140px;">
               <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Accounts</div>
               <template x-for="a in (dashDataCurrency?.transactions || [])" :key="a.account">
-                <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
-                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"
+                <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;"
                     :style="a.days_ago <= 7 ? 'background:#22c55e' : a.days_ago <= 14 ? 'background:#f59e0b' : 'background:#ef4444'"></span>
-                  <span style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="a.account"></span>
-                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;" x-text="a.days_ago === 0 ? 'today' : a.days_ago + 'd ago'"></span>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="a.account"></div>
+                    <div x-show="a.earliest_date" style="font-size:10px;color:var(--muted);margin-top:1px;"
+                      x-text="a.earliest_date ? new Date(a.earliest_date + 'T00:00').toLocaleDateString('en-AU',{month:'short',year:'numeric'}) + ' – ' + new Date(a.date + 'T00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : ''"></div>
+                  </div>
+                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;padding-top:1px;" x-text="a.days_ago === 0 ? 'today' : a.days_ago + 'd ago'"></span>
                 </div>
               </template>
               <div x-show="!dashDataCurrency?.transactions?.length" style="font-size:12px;color:var(--muted);">No accounts</div>
@@ -528,11 +532,15 @@
             <div style="flex:1;min-width:140px;">
               <div style="font-size:11px;color:var(--muted);margin-bottom:6px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;">Payslips</div>
               <template x-for="p in (dashDataCurrency?.payslips || [])" :key="p.employer">
-                <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--border);">
-                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;"
+                <div style="display:flex;align-items:flex-start;gap:8px;padding:6px 0;border-bottom:1px solid var(--border);">
+                  <span style="width:8px;height:8px;border-radius:50%;flex-shrink:0;margin-top:4px;"
                     :style="p.days_ago <= 14 ? 'background:#22c55e' : p.days_ago <= 30 ? 'background:#f59e0b' : 'background:#ef4444'"></span>
-                  <span style="font-size:12px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="p.employer"></span>
-                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;" x-text="p.days_ago === 0 ? 'today' : p.days_ago + 'd ago'"></span>
+                  <div style="flex:1;min-width:0;">
+                    <div style="font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" x-text="p.employer"></div>
+                    <div x-show="p.earliest_date" style="font-size:10px;color:var(--muted);margin-top:1px;"
+                      x-text="p.earliest_date ? new Date(p.earliest_date + 'T00:00').toLocaleDateString('en-AU',{month:'short',year:'numeric'}) + ' – ' + new Date(p.date + 'T00:00').toLocaleDateString('en-AU',{day:'numeric',month:'short',year:'numeric'}) : ''"></div>
+                  </div>
+                  <span style="font-size:11px;color:var(--muted);flex-shrink:0;padding-top:1px;" x-text="p.days_ago === 0 ? 'today' : p.days_ago + 'd ago'"></span>
                 </div>
               </template>
               <div x-show="!dashDataCurrency?.payslips?.length" style="font-size:12px;color:var(--muted);">No payslips</div>

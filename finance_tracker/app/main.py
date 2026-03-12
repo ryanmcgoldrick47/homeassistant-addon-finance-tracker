@@ -1248,8 +1248,19 @@ def dashboard_data_currency(authorization: str = __import__("fastapi").Header(de
                 ).order_by(Transaction.date.desc()).limit(1)
             ).first()
             if last_date:
+                first_date = session.exec(
+                    select(Transaction.date).where(
+                        Transaction.user_id == user_id,
+                        Transaction.account_id == acct.id,
+                    ).order_by(Transaction.date.asc()).limit(1)
+                ).first()
                 days_ago = (today - last_date).days
-                result["transactions"].append({"account": acct.name, "date": str(last_date), "days_ago": days_ago})
+                result["transactions"].append({
+                    "account": acct.name,
+                    "date": str(last_date),
+                    "days_ago": days_ago,
+                    "earliest_date": str(first_date) if first_date else None,
+                })
 
         # Last payslip date per employer
         employers = session.exec(
@@ -1266,8 +1277,19 @@ def dashboard_data_currency(authorization: str = __import__("fastapi").Header(de
                 ).order_by(Payslip.pay_date.desc()).limit(1)
             ).first()
             if last_date:
+                first_date = session.exec(
+                    select(Payslip.pay_date).where(
+                        Payslip.user_id == user_id,
+                        Payslip.employer == employer,
+                    ).order_by(Payslip.pay_date.asc()).limit(1)
+                ).first()
                 days_ago = (today - last_date).days
-                result["payslips"].append({"employer": employer, "date": str(last_date), "days_ago": days_ago})
+                result["payslips"].append({
+                    "employer": employer,
+                    "date": str(last_date),
+                    "days_ago": days_ago,
+                    "earliest_date": str(first_date) if first_date else None,
+                })
 
     result["transactions"].sort(key=lambda x: x["days_ago"])
     result["payslips"].sort(key=lambda x: x["days_ago"])
